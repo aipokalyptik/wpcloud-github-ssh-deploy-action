@@ -57,9 +57,6 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           docroot: /home/151770228/htdocs
           source: .
-          boundary-rules: |
-            wp-content/plugins depth=1
-            wp-content/themes depth=1
           keep-releases: 5
 ```
 
@@ -178,14 +175,14 @@ wp-content/themes/site/style.css -> wp-content/themes/site
 
 This avoids creating one symlink per file and prevents the action from claiming overly broad paths like all of `wp-content`.
 
-Configured boundary rules are optional additions to dynamic sticky-bit boundaries:
+Configured boundary rules are an advanced portability option for hosts that do not mark dynamic boundaries with sticky-bit directories:
 
 ```text
 wp-content/plugins depth=1
 wp-content/themes depth=1
 ```
 
-Unlisted directories are given free rein at their top-level claim unless blocked by the protected probe or interrupted by a dynamic sticky-bit boundary.
+These rules should not appear in the primary workflow example because the default behavior is to infer boundaries from the host. Unlisted directories are given free rein at their top-level claim unless blocked by the protected probe or interrupted by a dynamic sticky-bit boundary.
 
 ## Add, Change, And Remove Behavior
 
