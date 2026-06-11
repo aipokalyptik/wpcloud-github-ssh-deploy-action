@@ -67,7 +67,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: aipokalyptik/wpcloud-github-ssh-deploy-action@v1
         with:
           host: ${{ secrets.WPCLOUD_SSH_HOST }}
@@ -113,3 +113,18 @@ Run these against a disposable or non-production site:
 Record the workflow URL, release IDs, rollback command, and observed public
 paths in the release checklist. Do not record passwords or private host details
 in public issues or release notes.
+
+## 1.0 Validation Evidence
+
+Validation for the 1.0 release candidate was run on 2026-06-11:
+
+- Local suite: `tests/run.sh` passed on `main`; `shellcheck` was skipped locally
+  because it was not installed.
+- Private E2E: `aipokalyptik/jippity-deploy-testbed` run `27384594373`
+  completed successfully against the disposable WP Cloud/Pressable test site.
+- Covered live scenarios: initialization, add, change, remove, protected-path
+  rejection, layered theme/plugin deployments, and failing post-deploy hook
+  semantics after promotion.
+- Live E2E caught a remote `/dev/fd` process-substitution incompatibility. The
+  fix removed process substitution from the uploaded remote helper and added a
+  regression check in `tests/test_action_metadata.sh`.
