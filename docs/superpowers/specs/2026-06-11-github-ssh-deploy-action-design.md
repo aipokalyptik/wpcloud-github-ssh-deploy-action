@@ -114,15 +114,15 @@ Changed files become visible at the `current` flip. Added public symlinks are cr
 
 A removed path may briefly be a broken symlink after the flip and before cleanup. That is acceptable because it is equivalent to the removed path not existing.
 
-## Protection Model
+## Protection And Boundary Model
 
-Before changing public paths, the action probes protected anchors from the real docroot:
+Before changing public paths, the action probes undeployable anchors from the real docroot:
 
 ```sh
 find \( -uid 0 -or -gid 0 \) -and -not -writable
 ```
 
-Any path equal to or below one of these anchors is protected. The action must not replace, delete, or write through protected anchors.
+Any path equal to or below one of these anchors is protected. The action must not replace, delete, write through, or claim protected anchors. In practical terms, the action cannot deploy anything that matches this probe or descends from a path that matches this probe.
 
 Example protected anchors:
 
@@ -137,6 +137,26 @@ Example protected anchors:
 
 This allows writable children under root-owned parents while still blocking host-managed children.
 
+The action also probes dynamic boundary directories from the real docroot:
+
+```sh
+find -type d \( -uid 0 -or -gid 0 \) -and -perm -1000
+```
+
+Any directory matched by this probe is a boundary for claim compression. The action must not compress a repo path into a claim that would replace the sticky directory itself. Instead, paths below a sticky boundary are claimed at the next path segment below the deepest matching boundary.
+
+Example dynamic boundaries:
+
+```text
+.
+./wp-content
+./wp-content/plugins
+./wp-content/mu-plugins
+./wp-content/themes
+```
+
+If `wp-content/plugins` is a dynamic boundary, `wp-content/plugins/foo/foo.php` claims `wp-content/plugins/foo`, not `wp-content` or `wp-content/plugins`. If `wp-content` is a dynamic boundary and no deeper boundary matches a repo path, `wp-content/uploads/a.jpg` claims `wp-content/uploads`.
+
 ## Claim Rules
 
 The action compresses repo files into the fewest safe public symlink claims.
@@ -149,7 +169,7 @@ assets/app.css         -> assets
 includes/bootstrap.php -> includes
 ```
 
-For configured boundary paths, the action claims at the configured depth:
+For dynamic or configured boundary paths, the action claims at the configured or implied depth:
 
 ```text
 wp-content/plugins/foo/foo.php   -> wp-content/plugins/foo
@@ -158,14 +178,14 @@ wp-content/themes/site/style.css -> wp-content/themes/site
 
 This avoids creating one symlink per file and prevents the action from claiming overly broad paths like all of `wp-content`.
 
-Boundary rules are intentionally small:
+Configured boundary rules are optional additions to dynamic sticky-bit boundaries:
 
 ```text
 wp-content/plugins depth=1
 wp-content/themes depth=1
 ```
 
-Unlisted directories are given free rein at their top-level claim unless blocked by the protected probe.
+Unlisted directories are given free rein at their top-level claim unless blocked by the protected probe or interrupted by a dynamic sticky-bit boundary.
 
 ## Add, Change, And Remove Behavior
 
@@ -220,7 +240,7 @@ A future Go helper is acceptable if claim planning becomes too complex, but v1 s
 4. Create `.github-ssh-deploy/releases/<release-id>`.
 5. Upload the repository snapshot with `rsync`.
 6. Compute old and new compressed claim sets.
-7. Probe protected anchors.
+7. Probe protected anchors and dynamic sticky-bit boundaries.
 8. Create or reclaim public symlinks for new claims.
 9. Atomically switch `.github-ssh-deploy/current` to the new release.
 10. Remove stale action-managed public symlinks that no longer exist in the new release.
