@@ -6,6 +6,7 @@ readonly VERSION="0.3.0-claim-compression"
 usage() {
   cat <<'USAGE'
 Usage: remote-deploy.sh --docroot PATH --deployment-id ID --release-id ID --keep-releases N [--post-deploy-file PATH] [--print-claims]
+       remote-deploy.sh --docroot PATH --deployment-id ID --rollback-to RELEASE_ID
 
 Promote an uploaded incoming release into the deployment namespace and update current.
 
@@ -16,6 +17,9 @@ Options:
                   nonzero without rolling back the active release.
   --print-claims  Print compressed claims for the incoming release and exit without
                   promoting the release or changing current.
+  --rollback-to RELEASE_ID
+                  Re-point current to an existing release and reconcile managed
+                  public symlinks. Post-deploy commands are not run.
 USAGE
 }
 
@@ -499,10 +503,61 @@ compute_claims() {
   rm -f -- "$claims_tmp"
 }
 
+rollback_release() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local rollback_to="$3"
+
+  local base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
+  local releases_dir="$base/releases"
+  local release_dir="$releases_dir/$rollback_to"
+  local lock_file="$base/deploy.lock"
+  local boundaries_file="$base/boundaries"
+  local protected_anchors_file="$base/protected_anchors"
+  local old_claims_file="$base/old_claims"
+  local new_claims_file="$base/new_claims"
+  local removed_claims_file="$base/removed_claims"
+  local old_release_claims_file="$base/old_release_claims.$$"
+  local materialized_claims_file="$base/materialized_claims.$$"
+  local current_target=""
+
+  mkdir -p "$releases_dir"
+
+  acquire_lock "$lock_file"
+
+  [[ -d "$release_dir" ]] || die "rollback release does not exist: $release_dir"
+
+  discover_boundary_claims "$docroot" "$boundaries_file"
+  discover_protected_anchors "$docroot" "$protected_anchors_file"
+
+  if [[ -L "$base/current" ]]; then
+    current_target="$(readlink "$base/current")"
+    compute_claims "$base/$current_target" "$boundaries_file" "$old_release_claims_file"
+  else
+    : >"$old_release_claims_file"
+  fi
+  discover_materialized_public_claims "$docroot" "$deployment_id" "$materialized_claims_file"
+  combine_claims "$old_claims_file" "$old_release_claims_file" "$materialized_claims_file"
+  rm -f -- "$old_release_claims_file" "$materialized_claims_file"
+
+  compute_claims "$release_dir" "$boundaries_file" "$new_claims_file"
+  validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
+  compute_removed_claims "$old_claims_file" "$new_claims_file" "$removed_claims_file"
+
+  cleanup_overlapping_removed_claims "$docroot" "$deployment_id" "$removed_claims_file" "$new_claims_file"
+  reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file"
+  switch_current "$base" "$rollback_to"
+  [[ "$(readlink "$base/current")" == "releases/$rollback_to" ]] || die "current does not point to releases/$rollback_to"
+  cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
+
+  echo "remote-deploy.sh: current=releases/$rollback_to" >&2
+}
+
 main() {
   local docroot=""
   local deployment_id=""
   local release_id=""
+  local rollback_to=""
   local keep_releases=""
   local post_deploy_file=""
   local print_claims=0
@@ -532,6 +587,11 @@ main() {
         release_id="$2"
         shift 2
         ;;
+      --rollback-to)
+        (($# >= 2)) || die "--rollback-to requires a value"
+        rollback_to="$2"
+        shift 2
+        ;;
       --keep-releases)
         (($# >= 2)) || die "--keep-releases requires a value"
         keep_releases="$2"
@@ -555,16 +615,30 @@ main() {
   docroot="$(trim "$docroot")"
   deployment_id="$(trim "$deployment_id")"
   release_id="$(trim "$release_id")"
+  rollback_to="$(trim "$rollback_to")"
   keep_releases="$(trim "$keep_releases")"
   post_deploy_file="$(trim "$post_deploy_file")"
 
   [[ -n "$docroot" ]] || die "docroot is required"
   require_id "deployment-id" "$deployment_id"
-  require_id "release-id" "$release_id"
-  [[ "$keep_releases" =~ ^[0-9]+$ ]] && ((10#$keep_releases >= 1)) || die "keep-releases must be a positive integer"
 
   command -v readlink >/dev/null 2>&1 || die "readlink is required"
   command -v flock >/dev/null 2>&1 || die "flock is required"
+
+  if [[ -n "$rollback_to" ]]; then
+    [[ -z "$release_id" ]] || die "--release-id cannot be used with --rollback-to"
+    if [[ -n "$keep_releases" ]]; then
+      [[ "$keep_releases" =~ ^[0-9]+$ ]] && ((10#$keep_releases >= 1)) || die "keep-releases must be a positive integer"
+    fi
+    [[ -z "$post_deploy_file" ]] || die "--post-deploy-file cannot be used with --rollback-to"
+    ((print_claims == 0)) || die "--print-claims cannot be used with --rollback-to"
+    require_id "rollback-to" "$rollback_to"
+    rollback_release "$docroot" "$deployment_id" "$rollback_to"
+    return
+  fi
+
+  require_id "release-id" "$release_id"
+  [[ "$keep_releases" =~ ^[0-9]+$ ]] && ((10#$keep_releases >= 1)) || die "keep-releases must be a positive integer"
 
   local base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local incoming_dir="$base/incoming"
