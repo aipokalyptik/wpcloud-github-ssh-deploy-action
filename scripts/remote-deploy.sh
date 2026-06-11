@@ -125,6 +125,7 @@ reconcile_new_claims() {
     target="$(public_symlink_target "$deployment_id" "$claim")"
     tmp_link="$parent_dir/.${public_path##*/}.github-ssh-deploy.$$"
 
+    reject_foreign_deployment_ancestor_claim "$docroot" "$deployment_id" "$claim"
     mkdir -p -- "$parent_dir"
     reject_foreign_deployment_claim "$deployment_id" "$claim" "$public_path"
     rm -f -- "$tmp_link"
@@ -172,6 +173,30 @@ reject_foreign_deployment_claim() {
   if owner="$(deployment_owner_from_target "$target")" && [[ "$owner" != "$deployment_id" ]]; then
     die "claim owned by another deployment: $claim"
   fi
+}
+
+reject_foreign_deployment_ancestor_claim() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local claim="$3"
+  local ancestor="$docroot"
+  local remainder="$claim"
+  local component
+  local target
+  local owner
+
+  while [[ "$remainder" == */* ]]; do
+    component="${remainder%%/*}"
+    remainder="${remainder#*/}"
+    ancestor="$ancestor/$component"
+
+    if [[ -L "$ancestor" ]]; then
+      target="$(readlink "$ancestor")"
+      if owner="$(deployment_owner_from_target "$target")" && [[ "$owner" != "$deployment_id" ]]; then
+        die "claim owned by another deployment: $claim"
+      fi
+    fi
+  done
 }
 
 remove_exact_claim_symlink() {

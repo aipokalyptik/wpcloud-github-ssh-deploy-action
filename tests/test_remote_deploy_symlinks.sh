@@ -196,3 +196,28 @@ fi
 grep -F "claim owned by another deployment: assets" "$foreign_stderr" >/dev/null || fail "missing foreign owner error"
 assert_symlink_target "$base/current" "releases/prior"
 assert_symlink_target "$docroot/assets" ".github-ssh-deploy/deployments/other-prod/current/assets"
+
+docroot="$tmpdir/foreign-ancestor-owner-docroot"
+boundaries="$tmpdir/foreign-ancestor-owner-boundaries"
+base="$docroot/.github-ssh-deploy/deployments/site-prod"
+other_base="$docroot/.github-ssh-deploy/deployments/other-prod"
+mkdir -p \
+  "$base/incoming/prior/index.php" \
+  "$base/incoming/claim-plugin/wp-content/plugins/foo" \
+  "$other_base/current/wp-content/plugins"
+printf 'prior\n' >"$base/incoming/prior/index.php/index.php"
+printf 'wanted\n' >"$base/incoming/claim-plugin/wp-content/plugins/foo/foo.php"
+printf 'other\n' >"$other_base/current/wp-content/plugins/other.php"
+
+printf '.\n./wp-content\n./wp-content/plugins\n' >"$boundaries"
+run_remote_deploy site-prod prior >/dev/null
+mkdir -p "$docroot/wp-content"
+rm -rf "$docroot/wp-content/plugins"
+ln -s "../.github-ssh-deploy/deployments/other-prod/current/wp-content/plugins" "$docroot/wp-content/plugins"
+foreign_ancestor_stderr="$tmpdir/foreign-ancestor-owner.stderr"
+if run_remote_deploy site-prod claim-plugin 2>"$foreign_ancestor_stderr"; then
+  fail "deploy should reject claim below ancestor owned by another deployment"
+fi
+grep -F "claim owned by another deployment: wp-content/plugins/foo" "$foreign_ancestor_stderr" >/dev/null || fail "missing foreign ancestor owner error"
+assert_symlink_target "$base/current" "releases/prior"
+assert_symlink_target "$docroot/wp-content/plugins" "../.github-ssh-deploy/deployments/other-prod/current/wp-content/plugins"
