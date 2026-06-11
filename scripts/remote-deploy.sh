@@ -81,6 +81,7 @@ prune_releases() {
   local release_path
   local release_name
 
+  { find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -exec ls -dt {} + 2>/dev/null || true; } |
   while IFS= read -r release_path; do
     release_name="${release_path##*/}"
     [[ "$release_name" == "$active_release" ]] && continue
@@ -91,7 +92,7 @@ prune_releases() {
     fi
 
     rm -rf -- "$release_path"
-  done < <(find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -exec ls -dt {} + 2>/dev/null)
+  done
 }
 
 run_post_deploy() {
@@ -228,12 +229,13 @@ reject_foreign_deployment_descendant_claim() {
 
   [[ -d "$public_path" && ! -L "$public_path" ]] || return 0
 
+  { find "$public_path" -mindepth 1 -type l -print0 2>/dev/null || true; } |
   while IFS= read -r -d '' link_path; do
     target="$(readlink "$link_path")"
     if owner="$(deployment_owner_from_target "$target")" && [[ "$owner" != "$deployment_id" ]]; then
       die "claim contains another deployment: $claim"
     fi
-  done < <(find "$public_path" -mindepth 1 -type l -print0 2>/dev/null)
+  done
 }
 
 remove_exact_claim_symlink() {
@@ -307,6 +309,7 @@ discover_materialized_public_claims() {
   rm -f -- "$claims_tmp"
   : >"$claims_tmp"
 
+  { find "$docroot" -path "$docroot/.github-ssh-deploy" -prune -o -type l -print0 2>/dev/null || true; } |
   while IFS= read -r -d '' link_path; do
     claim="${link_path#"$docroot"/}"
 
@@ -320,7 +323,7 @@ discover_materialized_public_claims() {
     if [[ "$target" == "$expected_target" ]]; then
       printf '%s\n' "$claim"
     fi
-  done < <(find "$docroot" -path "$docroot/.github-ssh-deploy" -prune -o -type l -print0 2>/dev/null) >"$claims_tmp"
+  done >"$claims_tmp"
 
   sort -u "$claims_tmp" >"$output_file"
   rm -f -- "$claims_tmp"
@@ -366,6 +369,7 @@ discover_boundary_claims() {
       printf '%s\n' "$normalized"
     done <"$GITHUB_SSH_DEPLOY_BOUNDARIES_FILE"
   else
+    { find "$docroot" -type d \( -uid 0 -or -gid 0 \) -and -perm -1000 2>/dev/null || true; } |
     while IFS= read -r boundary; do
       if [[ "$boundary" == "$docroot" ]]; then
         normalized=""
@@ -373,7 +377,7 @@ discover_boundary_claims() {
         normalized="$(normalize_public_path "${boundary#"$docroot"/}")"
       fi
       printf '%s\n' "$normalized"
-    done < <(find "$docroot" -type d \( -uid 0 -or -gid 0 \) -and -perm -1000 2>/dev/null)
+    done
   fi | sort -u >"$output_file"
 }
 
@@ -392,6 +396,7 @@ discover_protected_anchors() {
       printf '%s\n' "$normalized"
     done <"$GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE"
   else
+    { find "$docroot" \( -uid 0 -or -gid 0 \) -and -not -writable 2>/dev/null || true; } |
     while IFS= read -r anchor; do
       if [[ "$anchor" == "$docroot" ]]; then
         normalized=""
@@ -399,7 +404,7 @@ discover_protected_anchors() {
         normalized="$(normalize_public_path "${anchor#"$docroot"/}")"
       fi
       printf '%s\n' "$normalized"
-    done < <(find "$docroot" \( -uid 0 -or -gid 0 \) -and -not -writable 2>/dev/null)
+    done
   fi | sort -u >"$output_file"
 }
 
@@ -500,6 +505,7 @@ compute_claims() {
     return 0
   fi
 
+  find "$release_tree" \( -type f -or -type l \) -print0 |
   while IFS= read -r -d '' release_file; do
     public_path="${release_file#"$release_tree"/}"
 
@@ -515,7 +521,7 @@ compute_claims() {
     esac
 
     claim_for_path "$public_path" "$boundaries_file"
-  done < <(find "$release_tree" \( -type f -or -type l \) -print0) >"$claims_tmp"
+  done >"$claims_tmp"
 
   sort -u "$claims_tmp" >"$sorted_tmp"
   mv "$sorted_tmp" "$output_file"

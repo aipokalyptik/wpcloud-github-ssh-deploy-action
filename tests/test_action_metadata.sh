@@ -29,3 +29,7 @@ grep -EA5 "^[[:space:]]{2}docroot:" "$action_file" | grep -Fq 'default: /srv/htd
 
 grep -Eq "^[[:space:]]{2}using:[[:space:]]+'?composite'?" "$action_file" || fail "action must use composite runs"
 grep -Fq "scripts/deploy.sh" "$action_file" || fail "action must call scripts/deploy.sh"
+
+if grep -Eq '<\(|>\(|/dev/fd' "$repo_root/scripts/remote-deploy.sh"; then
+  fail "remote-deploy.sh must not require /dev/fd process substitution on remote hosts"
+fi
