@@ -1,0 +1,48 @@
+name: WP Cloud SSH Deploy
+description: Deploy a repository snapshot to a WP Cloud or Pressable docroot over SSH.
+
+inputs:
+  host:
+    description: SSH host name.
+    required: true
+  username:
+    description: SSH username.
+    required: true
+  password:
+    description: SSH password.
+    required: true
+  docroot:
+    description: Remote document root, such as /srv/htdocs.
+    required: true
+  source:
+    description: Local source path to deploy.
+    required: false
+    default: .
+  keep-releases:
+    description: Number of remote releases to keep.
+    required: false
+    default: "2"
+  post-deploy:
+    description: Optional newline-delimited commands to run on the remote host after deploy.
+    required: false
+    default: ""
+  deployment-id:
+    description: Optional stable deployment namespace. Defaults to the repository slug in a future implementation.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Run deploy skeleton
+      shell: bash
+      env:
+        INPUT_HOST: ${{ inputs.host }}
+        INPUT_USERNAME: ${{ inputs.username }}
+        INPUT_PASSWORD: ${{ inputs.password }}
+        INPUT_DOCROOT: ${{ inputs.docroot }}
+        INPUT_SOURCE: ${{ inputs.source }}
+        INPUT_KEEP_RELEASES: ${{ inputs.keep-releases }}
+        INPUT_POST_DEPLOY: ${{ inputs.post-deploy }}
+        INPUT_DEPLOYMENT_ID: ${{ inputs.deployment-id }}
+      run: ${{ github.action_path }}/scripts/deploy.sh --skeleton
