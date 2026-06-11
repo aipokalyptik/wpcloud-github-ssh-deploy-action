@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: apokalyptik/wpcloud-github-ssh-deploy-action@v1
+      - uses: aipokalyptik/wpcloud-github-ssh-deploy-action@v1
         with:
           host: ${{ secrets.WPCLOUD_SSH_HOST }}
           username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
