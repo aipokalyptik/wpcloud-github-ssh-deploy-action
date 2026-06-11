@@ -127,6 +127,47 @@ discover_boundary_claims() {
   fi | sort -u >"$output_file"
 }
 
+discover_protected_anchors() {
+  local docroot="$1"
+  local output_file="$2"
+  local anchor
+  local normalized
+
+  : >"$output_file"
+
+  if [[ -n "${GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE:-}" ]]; then
+    [[ -f "$GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE" ]] || die "protected anchors override file does not exist: $GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE"
+    while IFS= read -r anchor || [[ -n "$anchor" ]]; do
+      normalized="$(normalize_public_path "$anchor")"
+      printf '%s\n' "$normalized"
+    done <"$GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE"
+  else
+    while IFS= read -r anchor; do
+      if [[ "$anchor" == "$docroot" ]]; then
+        normalized=""
+      else
+        normalized="$(normalize_public_path "${anchor#"$docroot"/}")"
+      fi
+      printf '%s\n' "$normalized"
+    done < <(find "$docroot" \( -uid 0 -or -gid 0 \) -and -not -writable 2>/dev/null)
+  fi | sort -u >"$output_file"
+}
+
+validate_claims_not_protected() {
+  local claims_file="$1"
+  local protected_anchors_file="$2"
+  local claim
+  local anchor
+
+  while IFS= read -r claim || [[ -n "$claim" ]]; do
+    while IFS= read -r anchor || [[ -n "$anchor" ]]; do
+      if [[ -z "$anchor" || "$claim" == "$anchor" || "$claim" == "$anchor/"* ]]; then
+        die "protected path: $claim"
+      fi
+    done <"$protected_anchors_file"
+  done <"$claims_file"
+}
+
 claim_for_path() {
   local public_path="$1"
   local boundaries_file="$2"
@@ -259,6 +300,7 @@ main() {
   local release_dir="$releases_dir/$release_id"
   local lock_file="$base/deploy.lock"
   local boundaries_file="$base/boundaries"
+  local protected_anchors_file="$base/protected_anchors"
   local old_claims_file="$base/old_claims"
   local new_claims_file="$base/new_claims"
   local current_target=""
@@ -270,6 +312,7 @@ main() {
   [[ -d "$incoming_release" ]] || die "incoming release does not exist: $incoming_release"
 
   discover_boundary_claims "$docroot" "$boundaries_file"
+  discover_protected_anchors "$docroot" "$protected_anchors_file"
 
   if ((print_claims)); then
     compute_claims "$incoming_release" "$boundaries_file" "$new_claims_file"
@@ -286,9 +329,11 @@ main() {
     : >"$old_claims_file"
   fi
 
+  compute_claims "$incoming_release" "$boundaries_file" "$new_claims_file"
+  validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
+
   mv "$incoming_release" "$release_dir"
   touch "$release_dir"
-  compute_claims "$release_dir" "$boundaries_file" "$new_claims_file"
   switch_current "$base" "$release_id"
   [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
   prune_releases "$releases_dir" "$keep_releases" "$release_id"

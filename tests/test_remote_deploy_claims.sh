@@ -23,6 +23,12 @@ write_boundaries() {
   printf '%s\n' "$@" >"$file"
 }
 
+write_protected_anchors() {
+  local file="$1"
+  shift
+  printf '%s\n' "$@" >"$file"
+}
+
 run_print_claims() {
   GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
     "$remote_deploy" \
@@ -49,6 +55,7 @@ export PATH="$flock_shim_dir:$PATH"
 docroot="$tmpdir/docroot"
 base="$docroot/.github-ssh-deploy/deployments/site-prod"
 boundaries="$tmpdir/boundaries"
+protected_anchors="$tmpdir/protected-anchors"
 mkdir -p "$base/incoming/claim-test"
 
 mkdir -p \
@@ -152,3 +159,64 @@ cat >"$expected" <<'EOF'
 wp-content/plugins/foo
 EOF
 assert_file_equals "$expected" "$base/new_claims"
+
+assert_protected_failure() {
+  local release_id="$1"
+  local expected_path="$2"
+  local stderr_file="$tmpdir/$release_id.stderr"
+
+  if GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
+    GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE="$protected_anchors" \
+    "$remote_deploy" \
+      --docroot "$docroot" \
+      --deployment-id site-prod \
+      --release-id "$release_id" \
+      --keep-releases 2 \
+      2>"$stderr_file"; then
+    fail "deploy should reject protected path for $release_id"
+  fi
+
+  grep -F "protected path: $expected_path" "$stderr_file" >/dev/null || fail "missing protected path error for $expected_path"
+  [[ -d "$base/incoming/$release_id" ]] || fail "protected path failure should leave incoming release in place"
+  assert_symlink_target "$base/current" "releases/new-release"
+}
+
+assert_symlink_target() {
+  local link="$1"
+  local expected="$2"
+  [[ -L "$link" ]] || fail "expected symlink: $link"
+  local target
+  target="$(readlink "$link")"
+  [[ "$target" == "$expected" ]] || fail "expected $link -> $expected, got $target"
+}
+
+write_boundaries "$boundaries" \
+  "." \
+  "./wp-content" \
+  "./wp-content/plugins"
+
+write_protected_anchors "$protected_anchors" "index.php"
+mkdir -p "$base/incoming/protected-file"
+printf 'blocked\n' >"$base/incoming/protected-file/index.php"
+assert_protected_failure protected-file "index.php"
+
+write_protected_anchors "$protected_anchors" "wp-content/plugins"
+mkdir -p "$base/incoming/protected-directory-descendant/wp-content/plugins/bar"
+printf 'blocked\n' >"$base/incoming/protected-directory-descendant/wp-content/plugins/bar/bar.php"
+assert_protected_failure protected-directory-descendant "wp-content/plugins/bar"
+
+write_protected_anchors "$protected_anchors" "wp-content/plugins/akismet"
+mkdir -p "$base/incoming/protected-plugin/wp-content/plugins/akismet"
+printf 'blocked\n' >"$base/incoming/protected-plugin/wp-content/plugins/akismet/akismet.php"
+assert_protected_failure protected-plugin "wp-content/plugins/akismet"
+
+mkdir -p "$base/incoming/writable-sibling/wp-content/plugins/hello"
+printf 'allowed\n' >"$base/incoming/writable-sibling/wp-content/plugins/hello/hello.php"
+GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
+  GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE="$protected_anchors" \
+  "$remote_deploy" \
+    --docroot "$docroot" \
+    --deployment-id site-prod \
+    --release-id writable-sibling \
+    --keep-releases 2 >/dev/null
+assert_symlink_target "$base/current" "releases/writable-sibling"
