@@ -62,6 +62,8 @@ jobs:
 
 `keep-releases` defaults to `2`.
 
+`deployment-id` is optional. If omitted, the action derives it from the GitHub repository slug, normalized for safe path usage. Users can set `deployment-id` explicitly when they need a stable namespace across repository renames or when multiple workflows in one repository deploy independent layers.
+
 The action deploys directly into `/srv/htdocs`. In the target environment, the user-visible `htdocs` path is a root-owned symlink:
 
 ```text
@@ -77,34 +79,38 @@ The action stores release data inside a dotdir in the real docroot:
 ```text
 /srv/htdocs/
   .github-ssh-deploy/
-    current -> releases/20260611-203000-abcdef
-    releases/
-      20260611-203000-abcdef/
-      20260610-191500-123456/
+    deployments/
+      apokalyptik-example-repo/
+        current -> releases/20260611-203000-abcdef
+        releases/
+          20260611-203000-abcdef/
+          20260610-191500-123456/
 ```
 
 Public paths in the docroot become stable symlinks into the current release:
 
 ```text
-/srv/htdocs/index.php -> .github-ssh-deploy/current/index.php
-/srv/htdocs/assets -> .github-ssh-deploy/current/assets
-/srv/htdocs/wp-content/plugins/foo -> ../../../.github-ssh-deploy/current/wp-content/plugins/foo
+/srv/htdocs/index.php -> .github-ssh-deploy/deployments/apokalyptik-example-repo/current/index.php
+/srv/htdocs/assets -> .github-ssh-deploy/deployments/apokalyptik-example-repo/current/assets
+/srv/htdocs/wp-content/plugins/foo -> ../../../.github-ssh-deploy/deployments/apokalyptik-example-repo/current/wp-content/plugins/foo
 ```
 
 Direct HTTP requests to `/.github-ssh-deploy/...` are denied by the host, but requests through public symlinks resolve correctly.
+
+The deployment namespace allows multiple repositories to deploy independent layers into the same site. Each layer owns its own release store and `current` symlink. Deployments may coexist as long as they do not claim the same public path.
 
 ## Atomicity Model
 
 The action never rsyncs into live public files. It uploads a complete new release into:
 
 ```text
-/srv/htdocs/.github-ssh-deploy/releases/<release-id>/
+/srv/htdocs/.github-ssh-deploy/deployments/<deployment-id>/releases/<release-id>/
 ```
 
 Then it switches:
 
 ```text
-/srv/htdocs/.github-ssh-deploy/current
+/srv/htdocs/.github-ssh-deploy/deployments/<deployment-id>/current
 ```
 
 to the new release using an atomic symlink replacement where supported.
@@ -196,14 +202,14 @@ For each deploy:
 4. Flip `current` to the new release.
 5. Remove stale public symlinks only when all are true:
    - the path is a symlink,
-   - the symlink target points into `.github-ssh-deploy/current`,
+   - the symlink target points into `.github-ssh-deploy/deployments/<deployment-id>/current`,
    - the claim does not exist in the new release.
 
 The action does not use an ownership manifest for v1. State is reconstructed from:
 
 - the new release tree,
 - the previous release tree,
-- live public symlinks pointing into `.github-ssh-deploy/current`,
+- live public symlinks pointing into `.github-ssh-deploy/deployments/<deployment-id>/current`,
 - the protected-anchor probe.
 
 Manual symlink tampering is corrected on the next deploy if the repo currently wants that path and the path is not protected.
@@ -236,12 +242,12 @@ A future Go helper is acceptable if claim planning becomes too complex, but v1 s
 1. Establish SSH using the configured username and password.
 2. Acquire a remote deploy lock with `flock`.
 3. Resolve the real docroot path.
-4. Create `.github-ssh-deploy/releases/<release-id>`.
+4. Create `.github-ssh-deploy/deployments/<deployment-id>/releases/<release-id>`.
 5. Upload the repository snapshot with `rsync`.
 6. Compute old and new compressed claim sets.
 7. Probe protected anchors and dynamic sticky-bit boundaries.
 8. Create or reclaim public symlinks for new claims.
-9. Atomically switch `.github-ssh-deploy/current` to the new release.
+9. Atomically switch `.github-ssh-deploy/deployments/<deployment-id>/current` to the new release.
 10. Remove stale action-managed public symlinks that no longer exist in the new release.
 11. Prune old releases, keeping the configured count.
 12. Release the lock.
