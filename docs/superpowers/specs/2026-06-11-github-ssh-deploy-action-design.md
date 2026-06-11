@@ -55,18 +55,18 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          docroot: /home/151770228/htdocs
+          docroot: /srv/htdocs
           source: .
           keep-releases: 5
 ```
 
-The action resolves `docroot` to its real path before deployment. For example:
+The action deploys directly into `/srv/htdocs`. In the target environment, the user-visible `htdocs` path is a root-owned symlink:
 
 ```text
 /home/151770228/htdocs -> /srv/htdocs
 ```
 
-In that case, `/home/151770228/htdocs` is the configured docroot path, but all public symlink creation, release storage, and protection checks operate against the resolved real docroot path, `/srv/htdocs`. The root-owned docroot symlink itself is not the deployment target.
+Because that symlink always points at `/srv/htdocs`, the action should use `/srv/htdocs` as the docroot input and deployment target. If a user supplies a symlinked docroot path anyway, the action may resolve it with `realpath`, but the primary documented path is `/srv/htdocs`.
 
 ## Remote Layout
 
