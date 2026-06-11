@@ -86,6 +86,104 @@ prune_releases() {
   done < <(find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -exec ls -dt {} + 2>/dev/null)
 }
 
+public_symlink_target() {
+  local deployment_id="$1"
+  local claim="$2"
+  local parent="$claim"
+  local prefix=""
+
+  if [[ "$parent" == */* ]]; then
+    parent="${parent%/*}"
+    while [[ -n "$parent" ]]; do
+      prefix="../$prefix"
+      if [[ "$parent" == */* ]]; then
+        parent="${parent%/*}"
+      else
+        parent=""
+      fi
+    done
+  fi
+
+  printf '%s.github-ssh-deploy/deployments/%s/current/%s\n' "$prefix" "$deployment_id" "$claim"
+}
+
+reconcile_new_claims() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local claims_file="$3"
+  local claim
+  local public_path
+  local parent_dir
+  local target
+  local tmp_link
+
+  while IFS= read -r claim || [[ -n "$claim" ]]; do
+    [[ -n "$claim" ]] || continue
+
+    public_path="$docroot/$claim"
+    parent_dir="${public_path%/*}"
+    target="$(public_symlink_target "$deployment_id" "$claim")"
+    tmp_link="$parent_dir/.${public_path##*/}.github-ssh-deploy.$$"
+
+    mkdir -p -- "$parent_dir"
+    rm -f -- "$tmp_link"
+    ln -s "$target" "$tmp_link"
+    rm -rf -- "$public_path"
+    mv -f -- "$tmp_link" "$public_path"
+  done <"$claims_file"
+}
+
+compute_removed_claims() {
+  local old_claims_file="$1"
+  local new_claims_file="$2"
+  local removed_claims_file="$3"
+  local old_sorted="$removed_claims_file.old.$$"
+  local new_sorted="$removed_claims_file.new.$$"
+
+  rm -f -- "$old_sorted" "$new_sorted"
+  sort -u "$old_claims_file" >"$old_sorted"
+  sort -u "$new_claims_file" >"$new_sorted"
+  comm -23 "$old_sorted" "$new_sorted" >"$removed_claims_file"
+  rm -f -- "$old_sorted" "$new_sorted"
+}
+
+target_points_into_current() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local target="$3"
+  local relative_prefix=".github-ssh-deploy/deployments/$deployment_id/current"
+  local absolute_prefix="$docroot/$relative_prefix"
+
+  case "$target" in
+    "$relative_prefix"|"$relative_prefix"/*|*/"$relative_prefix"|*/"$relative_prefix"/*|"$absolute_prefix"|"$absolute_prefix"/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+cleanup_removed_claims() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local removed_claims_file="$3"
+  local claim
+  local public_path
+  local target
+
+  while IFS= read -r claim || [[ -n "$claim" ]]; do
+    [[ -n "$claim" ]] || continue
+
+    public_path="$docroot/$claim"
+    [[ -L "$public_path" ]] || continue
+
+    target="$(readlink "$public_path")"
+    if target_points_into_current "$docroot" "$deployment_id" "$target"; then
+      rm -f -- "$public_path"
+    fi
+  done <"$removed_claims_file"
+}
+
 normalize_public_path() {
   local value="$1"
 
@@ -342,6 +440,7 @@ main() {
   local protected_anchors_file="$base/protected_anchors"
   local old_claims_file="$base/old_claims"
   local new_claims_file="$base/new_claims"
+  local removed_claims_file="$base/removed_claims"
   local current_target=""
 
   mkdir -p "$incoming_dir" "$releases_dir"
@@ -370,11 +469,14 @@ main() {
 
   compute_claims "$incoming_release" "$boundaries_file" "$new_claims_file"
   validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
+  compute_removed_claims "$old_claims_file" "$new_claims_file" "$removed_claims_file"
 
   mv "$incoming_release" "$release_dir"
   touch "$release_dir"
+  reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file"
   switch_current "$base" "$release_id"
   [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
+  cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
   prune_releases "$releases_dir" "$keep_releases" "$release_id"
 
   echo "remote-deploy.sh: current=releases/$release_id" >&2
