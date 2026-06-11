@@ -161,12 +161,22 @@ compute_claims() {
   local output_file="$3"
   local release_file
   local public_path
+  local claims_tmp="$output_file.tmp.$$"
+  local sorted_tmp="$output_file.sorted.$$"
 
-  : >"$output_file"
-  [[ -d "$release_tree" ]] || return 0
+  rm -f -- "$claims_tmp" "$sorted_tmp"
+  if [[ ! -d "$release_tree" ]]; then
+    : >"$output_file"
+    return 0
+  fi
 
-  while IFS= read -r release_file; do
+  while IFS= read -r -d '' release_file; do
     public_path="${release_file#"$release_tree"/}"
+
+    if [[ "$public_path" == *$'\n'* ]]; then
+      rm -f -- "$claims_tmp" "$sorted_tmp"
+      die "unsupported newline in release path"
+    fi
 
     case "$public_path" in
       .git|.git/*|.github-ssh-deploy|.github-ssh-deploy/*)
@@ -175,7 +185,11 @@ compute_claims() {
     esac
 
     claim_for_path "$public_path" "$boundaries_file"
-  done < <(find "$release_tree" \( -type f -or -type l \) -print) | sort -u >"$output_file"
+  done < <(find "$release_tree" \( -type f -or -type l \) -print0) >"$claims_tmp"
+
+  sort -u "$claims_tmp" >"$sorted_tmp"
+  mv "$sorted_tmp" "$output_file"
+  rm -f -- "$claims_tmp"
 }
 
 main() {

@@ -87,6 +87,19 @@ assert_file_equals "$expected" "$actual"
 [[ ! -e "$base/current" ]] || fail "--print-claims should not update current"
 [[ -d "$base/incoming/claim-test" ]] || fail "--print-claims should not promote incoming release"
 
+mkdir -p "$base/incoming/newline-release/bad"
+printf 'bad\n' >"$base/incoming/newline-release/bad/"$'unsupported\npath.txt'
+newline_stdout="$tmpdir/newline.stdout"
+newline_stderr="$tmpdir/newline.stderr"
+: >"$base/new_claims"
+if run_print_claims newline-release >"$newline_stdout" 2>"$newline_stderr"; then
+  fail "--print-claims should reject release paths containing newlines"
+fi
+grep -F "unsupported newline in release path" "$newline_stderr" >/dev/null || fail "missing clear newline path error"
+[[ ! -s "$newline_stdout" ]] || fail "newline path rejection should not emit stdout claims"
+[[ ! -s "$base/new_claims" ]] || fail "newline path rejection should not write bogus claims"
+grep -F "path.txt" "$base/new_claims" >/dev/null && fail "newline path rejection wrote a split bogus claim"
+
 write_boundaries "$boundaries" \
   "." \
   "./wp-content"
