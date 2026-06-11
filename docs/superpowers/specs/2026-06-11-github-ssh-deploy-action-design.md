@@ -65,6 +65,8 @@ jobs:
 
 `keep-releases` defaults to `2`.
 
+`post-deploy` is optional. If omitted, no post-deploy commands run. If provided, the action runs exactly the listed commands in order.
+
 `deployment-id` is optional. If omitted, the action derives it from the GitHub repository slug, normalized for safe path usage. Users can set `deployment-id` explicitly when they need a stable namespace across repository renames or when multiple workflows in one repository deploy independent layers.
 
 The action deploys directly into `/srv/htdocs`. In the target environment, the user-visible `htdocs` path is a root-owned symlink:
@@ -219,16 +221,18 @@ Manual symlink tampering is corrected on the next deploy if the repo currently w
 
 ## Post-Deploy Commands
 
-The action supports post-deploy commands that run after the atomic `current` flip and stale symlink cleanup.
+The action supports optional post-deploy commands that run after the atomic `current` flip and stale symlink cleanup.
 
-The default WordPress-oriented commands are:
+There are no hidden default post-deploy commands. If `post-deploy` is omitted, no post-deploy commands run. If `post-deploy` is provided, the action runs exactly the listed commands in order.
+
+A WordPress-oriented workflow can include:
 
 ```sh
 wp cache flush
 echo "y" | wp edge-cache purge --domain
 ```
 
-Users can add commands with the `post-deploy` input. V1 treats user-provided commands as additions that run after the default commands. Commands run on the remote host from the real docroot.
+Commands run on the remote host from the real docroot.
 
 If a post-deploy command fails, the action fails the GitHub workflow but does not automatically roll back. The new release remains active because cache flush and purge commands are operational side effects, not proof that the release files are invalid.
 
