@@ -210,6 +210,9 @@ main() {
 
   local remote_base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local remote_release="$remote_base/incoming/$release_id"
+  local remote_script="$remote_base/remote-deploy.sh"
+  local local_script_dir
+  local_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local source_path="$source"
   if [[ "$source_path" != */ ]]; then
     source_path="$source_path/"
@@ -231,6 +234,7 @@ main() {
   info "deployment_id=$deployment_id"
   info "release_id=$release_id"
   info "remote_release=$remote_release"
+  info "remote_script=$remote_script"
   [[ -z "$post_deploy" ]] || info "post_deploy=provided"
 
   run_or_print "mkdir" \
@@ -238,6 +242,16 @@ main() {
 
   run_or_print "rsync" \
     env "SSHPASS=$password" sshpass -e rsync -az --delete -e "$ssh_command" "$source_path" "$username@$host:$remote_release/"
+
+  run_or_print "remote-script-upload" \
+    env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_script_dir/remote-deploy.sh" "$username@$host:$remote_script"
+
+  run_or_print "remote-script-chmod" \
+    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 700 $(printf '%q' "$remote_script")"
+
+  run_or_print "remote-deploy $deployment_id $release_id" \
+    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" \
+      "bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases")"
 }
 
 password=""
