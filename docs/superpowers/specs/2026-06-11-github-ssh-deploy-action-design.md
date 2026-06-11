@@ -25,6 +25,12 @@ The action should lean on standard host tools for work they already do well: `rs
 
 Small, readable Bash functions are preferred over clever one-liners. A helper binary or additional runtime should only be introduced if the Bash implementation becomes harder to verify than the dependency it replaces.
 
+## Collaboration Principle
+
+Implementation work must not silently choose between meaningful alternatives. When a decision affects behavior, compatibility, security, data loss risk, user experience, or implementation complexity, Codex should present the realistic options with trade-offs and wait for the user to choose.
+
+This does not apply to mechanical details that are already implied by the approved design, such as formatting a script consistently or using an existing standard tool exactly as specified. It does apply to deploy semantics, fallback behavior, defaults, destructive operations, compatibility trade-offs, and packaging choices.
+
 ## User Experience
 
 A repository can deploy with a workflow like this:
