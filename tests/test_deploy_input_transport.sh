@@ -33,7 +33,7 @@ run_deploy() {
     export INPUT_HOST="${INPUT_HOST-example.com}"
     export INPUT_USERNAME="${INPUT_USERNAME-deploy}"
     export INPUT_PASSWORD="${INPUT_PASSWORD-secret-password}"
-    export GITHUB_REPOSITORY="${GITHUB_REPOSITORY-Owner/Example Repo}"
+    export GITHUB_REPOSITORY="${TEST_GITHUB_REPOSITORY-Owner/Example Repo}"
     export GITHUB_SSH_DEPLOY_RELEASE_ID="${GITHUB_SSH_DEPLOY_RELEASE_ID-release-test}"
     "$deploy" "$@"
   ) >"$stdout_file" 2>"$stderr_file"
