@@ -5,6 +5,10 @@ inputs:
   host:
     description: SSH host name.
     required: true
+  port:
+    description: SSH port.
+    required: false
+    default: "22"
   username:
     description: SSH username.
     required: true
@@ -13,7 +17,8 @@ inputs:
     required: true
   docroot:
     description: Remote document root, such as /srv/htdocs.
-    required: true
+    required: false
+    default: /srv/htdocs
   source:
     description: Local source path to deploy.
     required: false
@@ -27,17 +32,22 @@ inputs:
     required: false
     default: ""
   deployment-id:
-    description: Optional stable deployment namespace. Defaults to the repository slug in a future implementation.
+    description: Optional stable deployment namespace. Defaults to the normalized repository slug.
+    required: false
+    default: ""
+  known-hosts:
+    description: Optional known_hosts content. If omitted, ssh-keyscan is used for host key discovery.
     required: false
     default: ""
 
 runs:
   using: composite
   steps:
-    - name: Run deploy skeleton
+    - name: Run SSH deploy transport
       shell: bash
       env:
         INPUT_HOST: ${{ inputs.host }}
+        INPUT_PORT: ${{ inputs.port }}
         INPUT_USERNAME: ${{ inputs.username }}
         INPUT_PASSWORD: ${{ inputs.password }}
         INPUT_DOCROOT: ${{ inputs.docroot }}
@@ -45,4 +55,5 @@ runs:
         INPUT_KEEP_RELEASES: ${{ inputs.keep-releases }}
         INPUT_POST_DEPLOY: ${{ inputs.post-deploy }}
         INPUT_DEPLOYMENT_ID: ${{ inputs.deployment-id }}
-      run: ${{ github.action_path }}/scripts/deploy.sh --skeleton
+        INPUT_KNOWN_HOSTS: ${{ inputs.known-hosts }}
+      run: ${{ github.action_path }}/scripts/deploy.sh

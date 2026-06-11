@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 "$repo_root/tests/test_action_metadata.sh"
+"$repo_root/tests/test_deploy_input_transport.sh"
 
 for script in "$repo_root"/scripts/*.sh; do
   [[ -e "$script" ]] || continue

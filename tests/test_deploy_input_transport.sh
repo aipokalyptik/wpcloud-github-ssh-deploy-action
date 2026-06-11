@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+deploy="$repo_root/scripts/deploy.sh"
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+assert_contains() {
+  local needle="$1"
+  local file="$2"
+  grep -Fq -- "$needle" "$file" || fail "expected '$needle' in $file"
+}
+
+assert_not_contains() {
+  local needle="$1"
+  local file="$2"
+  if grep -Fq -- "$needle" "$file"; then
+    fail "did not expect '$needle' in $file"
+  fi
+}
+
+run_deploy() {
+  local stdout_file="$1"
+  local stderr_file="$2"
+  shift 2
+
+  (
+    export GITHUB_SSH_DEPLOY_DRY_RUN=1
+    export INPUT_HOST="${INPUT_HOST-example.com}"
+    export INPUT_USERNAME="${INPUT_USERNAME-deploy}"
+    export INPUT_PASSWORD="${INPUT_PASSWORD-secret-password}"
+    export GITHUB_REPOSITORY="${GITHUB_REPOSITORY-Owner/Example Repo}"
+    export GITHUB_SSH_DEPLOY_RELEASE_ID="${GITHUB_SSH_DEPLOY_RELEASE_ID-release-test}"
+    "$deploy" "$@"
+  ) >"$stdout_file" 2>"$stderr_file"
+}
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+stdout="$tmpdir/stdout"
+stderr="$tmpdir/stderr"
+
+if INPUT_HOST="" run_deploy "$stdout" "$stderr"; then
+  fail "missing host should fail"
+fi
+assert_contains "missing required input: host" "$stderr"
+unset INPUT_HOST
+
+if INPUT_USERNAME="" run_deploy "$stdout" "$stderr"; then
+  fail "missing username should fail"
+fi
+assert_contains "missing required input: username" "$stderr"
+unset INPUT_USERNAME
+
+if INPUT_PASSWORD="" run_deploy "$stdout" "$stderr"; then
+  fail "missing password should fail"
+fi
+assert_contains "missing required input: password" "$stderr"
+unset INPUT_PASSWORD
+
+run_deploy "$stdout" "$stderr"
+assert_contains "::add-mask::secret-password" "$stdout"
+assert_contains "port=22" "$stderr"
+assert_contains "docroot=/srv/htdocs" "$stderr"
+assert_contains "source=." "$stderr"
+assert_contains "keep_releases=2" "$stderr"
+assert_contains "deployment_id=owner-example-repo" "$stderr"
+assert_contains "ssh-keyscan -p 22 example.com" "$stderr"
+assert_contains "/srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/incoming/release-test/" "$stderr"
+assert_contains "rsync -az --delete" "$stderr"
+assert_contains "env SSHPASS=REDACTED sshpass -e" "$stderr"
+assert_not_contains "secret-password" "$stderr"
+
+INPUT_PASSWORD='p@ss word!*' run_deploy "$stdout" "$stderr"
+assert_contains "::add-mask::p@ss word!*" "$stdout"
+assert_contains "env SSHPASS=REDACTED sshpass -e" "$stderr"
+assert_not_contains 'p@ss word!*' "$stderr"
+unset INPUT_PASSWORD
+
+INPUT_PORT=2222 \
+INPUT_DOCROOT=/tmp/site \
+INPUT_SOURCE=dist \
+INPUT_KEEP_RELEASES=5 \
+INPUT_DEPLOYMENT_ID=" My_App--Prod!! " \
+run_deploy "$stdout" "$stderr"
+assert_contains "port=2222" "$stderr"
+assert_contains "docroot=/tmp/site" "$stderr"
+assert_contains "source=dist" "$stderr"
+assert_contains "keep_releases=5" "$stderr"
+assert_contains "deployment_id=my-app-prod" "$stderr"
+assert_contains "ssh-keyscan -p 2222 example.com" "$stderr"
+assert_contains "deploy@example.com:/tmp/site/.github-ssh-deploy/deployments/my-app-prod/incoming/release-test/" "$stderr"
+
+known_hosts_tmp="$tmpdir/known-hosts"
+INPUT_KNOWN_HOSTS="example.com ssh-ed25519 AAAATEST" \
+GITHUB_SSH_DEPLOY_TMPDIR="$known_hosts_tmp" \
+GITHUB_SSH_DEPLOY_KEEP_TEMP=1 \
+run_deploy "$stdout" "$stderr"
+assert_contains "known_hosts_source=input" "$stderr"
+assert_not_contains "ssh-keyscan" "$stderr"
+assert_contains "example.com ssh-ed25519 AAAATEST" "$known_hosts_tmp/known_hosts"
+
+if INPUT_PORT=not-a-port run_deploy "$stdout" "$stderr"; then
+  fail "invalid port should fail"
+fi
+assert_contains "port must be an integer from 1 to 65535" "$stderr"
+
+if INPUT_KEEP_RELEASES=zero run_deploy "$stdout" "$stderr"; then
+  fail "invalid keep-releases should fail"
+fi
+assert_contains "keep-releases must be a positive integer" "$stderr"
