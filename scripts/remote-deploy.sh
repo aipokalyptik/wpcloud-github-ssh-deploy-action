@@ -43,8 +43,8 @@ switch_current() {
     return 0
   fi
 
-  # macOS/BSD mv has no -T. This fallback is intentionally local-testable only:
-  # it replaces a file/symlink current pointer, but refuses a real directory.
+  # Some mv implementations do not provide -T. This fallback safely replaces a
+  # file/symlink current pointer, but refuses a real directory.
   if [[ -d "$current" && ! -L "$current" ]]; then
     rm -f "$tmp_current"
     die "current exists as a directory; cannot replace without mv -T"
@@ -53,57 +53,33 @@ switch_current() {
   mv "$tmp_current" "$current"
 }
 
-fallback_lock_dir=""
-
-release_fallback_lock() {
-  if [[ -n "$fallback_lock_dir" ]]; then
-    rmdir "$fallback_lock_dir" 2>/dev/null || true
-  fi
-}
-
 acquire_lock() {
   local lock_file="$1"
 
-  if command -v flock >/dev/null 2>&1; then
-    exec 9>"$lock_file"
-    flock -x 9
-    return 0
-  fi
-
-  : >"$lock_file"
-  fallback_lock_dir="$lock_file.dir"
-  until mkdir "$fallback_lock_dir" 2>/dev/null; do
-    sleep 0.1
-  done
-  trap release_fallback_lock EXIT
+  exec 9>"$lock_file"
+  flock -x 9
 }
 
 prune_releases() {
   local releases_dir="$1"
   local keep_releases="$2"
-  local releases=()
-  local release
-
-  shopt -s nullglob
-  for release in "$releases_dir"/*; do
-    [[ -d "$release" ]] || continue
-    releases+=("$(basename "$release")")
-  done
-  shopt -u nullglob
-
-  ((${#releases[@]} > keep_releases)) || return 0
-
-  local sorted
-  sorted="$(printf '%s\n' "${releases[@]}" | LC_ALL=C sort -r)"
-
-  local index=0
+  local active_release="$3"
+  local keep_non_active=$((keep_releases - 1))
+  local retained=0
+  local release_path
   local release_name
-  while IFS= read -r release_name; do
-    index=$((index + 1))
-    if ((index > keep_releases)); then
-      rm -rf -- "$releases_dir/$release_name"
+
+  while IFS= read -r release_path; do
+    release_name="${release_path##*/}"
+    [[ "$release_name" == "$active_release" ]] && continue
+
+    if ((retained < keep_non_active)); then
+      retained=$((retained + 1))
+      continue
     fi
-  done <<<"$sorted"
+
+    rm -rf -- "$release_path"
+  done < <(find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -exec ls -dt {} + 2>/dev/null)
 }
 
 main() {
@@ -159,6 +135,7 @@ main() {
   [[ "$keep_releases" =~ ^[0-9]+$ ]] && ((10#$keep_releases >= 1)) || die "keep-releases must be a positive integer"
 
   command -v readlink >/dev/null 2>&1 || die "readlink is required"
+  command -v flock >/dev/null 2>&1 || die "flock is required"
 
   local base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local incoming_dir="$base/incoming"
@@ -175,9 +152,10 @@ main() {
   [[ ! -e "$release_dir" ]] || die "release already exists: $release_dir"
 
   mv "$incoming_release" "$release_dir"
+  touch "$release_dir"
   switch_current "$base" "$release_id"
   [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
-  prune_releases "$releases_dir" "$keep_releases"
+  prune_releases "$releases_dir" "$keep_releases" "$release_id"
 
   echo "remote-deploy.sh: current=releases/$release_id" >&2
 }

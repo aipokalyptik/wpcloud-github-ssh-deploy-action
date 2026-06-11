@@ -36,6 +36,53 @@ run_remote_deploy() {
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+missing_flock_path="$tmpdir/no-flock-bin"
+mkdir -p "$missing_flock_path"
+ln -s "$(command -v readlink)" "$missing_flock_path/readlink"
+missing_flock_err="$tmpdir/missing-flock.err"
+if PATH="$missing_flock_path" /bin/bash "$remote_deploy" \
+  --docroot "$tmpdir/no-flock-docroot" \
+  --deployment-id site-prod \
+  --release-id no-flock-release \
+  --keep-releases 1 \
+  2>"$missing_flock_err"; then
+  fail "deploy should fail when flock is unavailable"
+fi
+grep -Fq "flock is required" "$missing_flock_err" || fail "missing flock failure should be explicit"
+
+flock_shim_dir="$tmpdir/bin"
+mkdir -p "$flock_shim_dir"
+cat >"$flock_shim_dir/flock" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+operation="lock"
+if [[ "${1:-}" == "-x" ]]; then
+  shift
+elif [[ "${1:-}" == "-u" ]]; then
+  operation="unlock"
+  shift
+fi
+
+fd="${1:-}"
+[[ "$fd" =~ ^[0-9]+$ ]] || {
+  echo "test flock shim: fd argument required" >&2
+  exit 64
+}
+
+python3 - "$operation" "$fd" <<'PY'
+import fcntl
+import sys
+
+operation = sys.argv[1]
+fd = int(sys.argv[2])
+flag = fcntl.LOCK_UN if operation == "unlock" else fcntl.LOCK_EX
+fcntl.flock(fd, flag)
+PY
+SH
+chmod +x "$flock_shim_dir/flock"
+export PATH="$flock_shim_dir:$PATH"
+
 docroot="$tmpdir/docroot"
 base="$docroot/.github-ssh-deploy/deployments/site-prod"
 mkdir -p "$base/incoming/20260611010101-a" "$base/incoming/20260611010202-b" "$base/incoming/20260611010303-c"
@@ -63,23 +110,9 @@ assert_symlink_target "$base/current" "releases/20260611010303-c"
 
 mkdir -p "$base/incoming/20260611010404-d"
 printf 'delta\n' >"$base/incoming/20260611010404-d/index.php"
-if command -v flock >/dev/null 2>&1; then
-  (
-    exec 8>"$base/deploy.lock"
-    flock -x 8
-    "$remote_deploy" \
-      --docroot "$docroot" \
-      --deployment-id site-prod \
-      --release-id 20260611010404-d \
-      --keep-releases 2 &
-    child=$!
-    sleep 0.2
-    [[ -d "$base/incoming/20260611010404-d" ]] || fail "deploy should wait while lock is held"
-    flock -u 8
-    wait "$child"
-  )
-else
-  mkdir "$base/deploy.lock.dir"
+(
+  exec 8>"$base/deploy.lock"
+  flock -x 8
   "$remote_deploy" \
     --docroot "$docroot" \
     --deployment-id site-prod \
@@ -88,8 +121,17 @@ else
   child=$!
   sleep 0.2
   [[ -d "$base/incoming/20260611010404-d" ]] || fail "deploy should wait while lock is held"
-  rmdir "$base/deploy.lock.dir"
+  flock -u 8
   wait "$child"
-fi
+)
 assert_symlink_target "$base/current" "releases/20260611010404-d"
 [[ ! -e "$base/incoming/20260611010404-d" ]] || fail "locked deploy did not promote release"
+
+mkdir -p "$base/incoming/z-release" "$base/incoming/a-release"
+printf 'zulu\n' >"$base/incoming/z-release/index.php"
+printf 'active\n' >"$base/incoming/a-release/index.php"
+
+run_remote_deploy z-release 1
+run_remote_deploy a-release 1
+assert_symlink_target "$base/current" "releases/a-release"
+[[ -d "$base/releases/a-release" ]] || fail "active release should not be pruned"
