@@ -58,6 +58,9 @@ jobs:
           docroot: /srv/htdocs
           source: .
           keep-releases: 2
+          post-deploy: |
+            wp cache flush
+            echo "y" | wp edge-cache purge --domain
 ```
 
 `keep-releases` defaults to `2`.
@@ -214,6 +217,21 @@ The action does not use an ownership manifest for v1. State is reconstructed fro
 
 Manual symlink tampering is corrected on the next deploy if the repo currently wants that path and the path is not protected.
 
+## Post-Deploy Commands
+
+The action supports post-deploy commands that run after the atomic `current` flip and stale symlink cleanup.
+
+The default WordPress-oriented commands are:
+
+```sh
+wp cache flush
+echo "y" | wp edge-cache purge --domain
+```
+
+Users can add commands with the `post-deploy` input. V1 treats user-provided commands as additions that run after the default commands. Commands run on the remote host from the real docroot.
+
+If a post-deploy command fails, the action fails the GitHub workflow but does not automatically roll back. The new release remains active because cache flush and purge commands are operational side effects, not proof that the release files are invalid.
+
 ## Remote Tooling
 
 The remote host has enough standard tooling for a lightweight implementation:
@@ -249,8 +267,9 @@ A future Go helper is acceptable if claim planning becomes too complex, but v1 s
 8. Create or reclaim public symlinks for new claims.
 9. Atomically switch `.github-ssh-deploy/deployments/<deployment-id>/current` to the new release.
 10. Remove stale action-managed public symlinks that no longer exist in the new release.
-11. Prune old releases, keeping the configured count.
-12. Release the lock.
+11. Run post-deploy commands.
+12. Prune old releases, keeping the configured count.
+13. Release the lock.
 
 ## Rollback
 
@@ -263,6 +282,8 @@ Rollback does not require a manifest.
 If upload, validation, or symlink preparation fails before the `current` flip, the old release remains active.
 
 If cleanup fails after the flip, the new release remains active and stale public symlinks can be retried on the next deploy.
+
+If a post-deploy command fails after the flip, the new release remains active and the GitHub workflow reports failure. The action does not automatically roll back.
 
 If a requested claim is protected, deployment fails before the flip.
 
