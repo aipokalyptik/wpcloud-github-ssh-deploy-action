@@ -57,8 +57,10 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           docroot: /srv/htdocs
           source: .
-          keep-releases: 5
+          keep-releases: 2
 ```
+
+`keep-releases` defaults to `2`.
 
 The action deploys directly into `/srv/htdocs`. In the target environment, the user-visible `htdocs` path is a root-owned symlink:
 
