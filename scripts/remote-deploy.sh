@@ -157,15 +157,54 @@ validate_claims_not_protected() {
   local claims_file="$1"
   local protected_anchors_file="$2"
   local claim
-  local anchor
+  local ancestor
+  local pair
+  local tmp_prefix
+  local ancestor_pairs_file
+  local ancestor_keys_file
+  local protected_keys_file
+  local blocked_anchors_file
+  local blocked_claim
+
+  tmp_prefix="${claims_file}.protected.$$"
+  ancestor_pairs_file="$tmp_prefix.ancestor-pairs"
+  ancestor_keys_file="$tmp_prefix.ancestor-keys"
+  protected_keys_file="$tmp_prefix.protected-keys"
+  blocked_anchors_file="$tmp_prefix.blocked-anchors"
+  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
 
   while IFS= read -r claim || [[ -n "$claim" ]]; do
-    while IFS= read -r anchor || [[ -n "$anchor" ]]; do
-      if [[ -z "$anchor" || "$claim" == "$anchor" || "$claim" == "$anchor/"* ]]; then
-        die "protected path: $claim"
+    ancestor="$claim"
+    while true; do
+      printf '%s\t%s\n' "$ancestor" "$claim"
+      [[ -z "$ancestor" ]] && break
+
+      if [[ "$ancestor" == */* ]]; then
+        ancestor="${ancestor%/*}"
+      else
+        ancestor=""
       fi
-    done <"$protected_anchors_file"
-  done <"$claims_file"
+    done
+  done <"$claims_file" >"$ancestor_pairs_file"
+
+  cut -f1 "$ancestor_pairs_file" | sort -u >"$ancestor_keys_file"
+  sort -u "$protected_anchors_file" >"$protected_keys_file"
+  comm -12 "$protected_keys_file" "$ancestor_keys_file" >"$blocked_anchors_file"
+
+  if [[ -s "$blocked_anchors_file" ]]; then
+    blocked_claim="$(
+      while IFS= read -r pair || [[ -n "$pair" ]]; do
+        if grep -Fxq -- "${pair%%$'\t'*}" "$blocked_anchors_file"; then
+          printf '%s\n' "${pair#*$'\t'}"
+          break
+        fi
+      done <"$ancestor_pairs_file"
+    )"
+    rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
+    die "protected path: $blocked_claim"
+  fi
+
+  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
 }
 
 claim_for_path() {

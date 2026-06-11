@@ -39,6 +39,9 @@ run_print_claims() {
       --print-claims
 }
 
+validator_body="$(awk '/^validate_claims_not_protected\(\)/,/^}/' "$remote_deploy")"
+grep -Eq '(^|[^[:alnum:]_])comm([^[:alnum:]_]|$)' <<<"$validator_body" || fail "protected-claim validation should use standard set comparison"
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
