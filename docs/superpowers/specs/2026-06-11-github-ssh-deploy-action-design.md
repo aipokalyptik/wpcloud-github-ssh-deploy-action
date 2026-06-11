@@ -55,7 +55,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          docroot: ~/htdocs
+          docroot: /home/151770228/htdocs
           source: .
           boundary-rules: |
             wp-content/plugins depth=1
@@ -63,7 +63,13 @@ jobs:
           keep-releases: 5
 ```
 
-The action resolves `docroot` to its real path before deployment. For example, if `~/htdocs` is a symlink to `/srv/htdocs`, all public symlink and protection checks operate against `/srv/htdocs`.
+The action resolves `docroot` to its real path before deployment. For example:
+
+```text
+/home/151770228/htdocs -> /srv/htdocs
+```
+
+In that case, `/home/151770228/htdocs` is the configured docroot path, but all public symlink creation, release storage, and protection checks operate against the resolved real docroot path, `/srv/htdocs`. The root-owned docroot symlink itself is not the deployment target.
 
 ## Remote Layout
 
