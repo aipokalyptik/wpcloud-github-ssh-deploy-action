@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$repo_root/tests/test_action_metadata.sh"
 "$repo_root/tests/test_deploy_input_transport.sh"
 "$repo_root/tests/test_remote_deploy_layout.sh"
+"$repo_root/tests/test_remote_deploy_claims.sh"
 
 for script in "$repo_root"/scripts/*.sh; do
   [[ -e "$script" ]] || continue
