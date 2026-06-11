@@ -89,19 +89,25 @@ Run these against a disposable or non-production site:
    retains the configured number of releases.
 3. Removing a file or directory from the source removes only this deployment's
    exact symlink claims, not unmanaged real files.
-4. A `post-deploy` hook runs from `/srv/htdocs` after promotion and can access
+4. Adding a wanted claim can replace an unmanaged real file or directory at the
+   same public path.
+5. A `post-deploy` hook runs from `/srv/htdocs` after promotion and can access
    the new `current` release.
-5. A failing `post-deploy` hook fails the workflow without automatically
+6. A failing `post-deploy` hook fails the workflow without automatically
    rolling back the already promoted release.
-6. Two deployment IDs can own separate paths in the same docroot.
-7. A deployment fails with `claim owned by another deployment` when it tries to
-   claim a path or descendant owned by another deployment ID.
-8. A deployment fails with `protected path` when it would replace a protected
+7. Two deployment IDs can own separate paths in the same docroot.
+8. A deployment fails with `claim owned by another deployment` when it tries to
+   claim a path owned by another deployment ID or a path below a symlink owned
+   by another deployment ID.
+9. A deployment fails with `claim contains another deployment` when it tries to
+   replace a directory containing a descendant symlink owned by another
+   deployment ID.
+10. A deployment fails with `protected path` when it would replace a protected
    host-owned anchor.
-9. Manual rollback with `remote-deploy.sh --rollback-to <release-id>` repoints
+11. Manual rollback with `remote-deploy.sh --rollback-to <release-id>` repoints
    `current`, reconciles public symlinks, and fails clearly for a missing or
    pruned release.
-10. `known-hosts` succeeds with a pinned host key; omitting it falls back to
+12. `known-hosts` succeeds with a pinned host key; omitting it falls back to
     `ssh-keyscan`.
 
 Record the workflow URL, release IDs, rollback command, and observed public

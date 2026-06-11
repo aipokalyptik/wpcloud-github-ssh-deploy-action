@@ -148,9 +148,11 @@ The conflict rules are conservative:
 - A deployment can replace its own symlinks.
 - A deployment does not remove unmanaged real files when they are no longer in
   its release.
-- A deployment can reclaim an unmanaged path that is part of its new claims.
-- A deployment refuses to claim a path, or a descendant of a path, already owned
-  by another deployment namespace.
+- A new wanted claim can reclaim and replace an unmanaged real file or directory
+  at that public path. Treat broad claims as destructive to unmanaged content at
+  the same path.
+- A deployment refuses to claim a path, claim below an ancestor, or claim over a
+  descendant symlink already owned by another deployment namespace.
 
 If two layers need the same public path, split their sources or boundaries so
 only one deployment owns that path.
@@ -192,13 +194,18 @@ pruned by `keep-releases` or would violate current protected anchors.
 
 `protected path: <path>`
 : The release would replace a protected host-owned path. Change the deployment
-  source, use a narrower `deployment-id` source tree, or deploy to a writable
-  child path.
+  source or repository contents, adjust the claim boundary shape, or deploy to a
+  writable child path.
 
 `claim owned by another deployment: <path>`
 : Another `deployment-id` owns that public symlink path or an ancestor. Move the
   conflicting files into one deployment, or change the layer split so ownership
   does not overlap.
+
+`claim contains another deployment: <path>`
+: Another `deployment-id` owns a descendant symlink inside the public directory
+  this release wants to claim. Narrow the source or boundaries, or move the
+  nested layer into the same deployment.
 
 `release already exists`
 : A release ID collision occurred. Normal GitHub runs generate timestamped IDs;

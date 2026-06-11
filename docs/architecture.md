@@ -114,6 +114,12 @@ Important consequences:
 - If claim granularity changes, overlapping stale symlinks are cleaned before
   or after reconciliation so parent and child claims do not block each other.
 
+Removal behavior is different from wanted-claim reclaim. When a new release
+wants a public claim, the helper may replace an unmanaged real file or directory
+at that exact public path with the deployment symlink. Operators should narrow
+the source tree or boundary shape when unmanaged content must remain at that
+path.
+
 ## Layered Deployments
 
 Layered deployments are supported by using different `deployment-id` values for
@@ -126,9 +132,12 @@ The helper detects ownership by reading symlink targets that contain:
 ```
 
 A deployment may replace its own symlink claims. It refuses to claim a path
-already owned by another namespace, and it also refuses to claim below an
-ancestor symlink owned by another namespace. This keeps independent layers from
-silently taking each other's public paths.
+already owned by another namespace, refuses to claim below an ancestor symlink
+owned by another namespace, and refuses to replace a directory that contains a
+descendant symlink owned by another namespace. Same-deployment descendant
+symlinks are allowed so parent and child claim transitions can be reclaimed by
+the owning deployment. This keeps independent layers from silently taking each
+other's public paths.
 
 ## Rollback
 

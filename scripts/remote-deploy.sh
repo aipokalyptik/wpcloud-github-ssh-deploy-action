@@ -146,6 +146,7 @@ reconcile_new_claims() {
     reject_foreign_deployment_ancestor_claim "$docroot" "$deployment_id" "$claim"
     mkdir -p -- "$parent_dir"
     reject_foreign_deployment_claim "$deployment_id" "$claim" "$public_path"
+    reject_foreign_deployment_descendant_claim "$deployment_id" "$claim" "$public_path"
     rm -f -- "$tmp_link"
     ln -s "$target" "$tmp_link"
     rm -rf -- "$public_path"
@@ -215,6 +216,24 @@ reject_foreign_deployment_ancestor_claim() {
       fi
     fi
   done
+}
+
+reject_foreign_deployment_descendant_claim() {
+  local deployment_id="$1"
+  local claim="$2"
+  local public_path="$3"
+  local link_path
+  local target
+  local owner
+
+  [[ -d "$public_path" && ! -L "$public_path" ]] || return 0
+
+  while IFS= read -r -d '' link_path; do
+    target="$(readlink "$link_path")"
+    if owner="$(deployment_owner_from_target "$target")" && [[ "$owner" != "$deployment_id" ]]; then
+      die "claim contains another deployment: $claim"
+    fi
+  done < <(find "$public_path" -mindepth 1 -type l -print0 2>/dev/null)
 }
 
 remove_exact_claim_symlink() {
