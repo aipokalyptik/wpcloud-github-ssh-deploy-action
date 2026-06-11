@@ -120,7 +120,7 @@ Validation for the 1.0 release candidate was run on 2026-06-11:
 
 - Local suite: `tests/run.sh` passed on `main`; `shellcheck` was skipped locally
   because it was not installed.
-- Private E2E: `aipokalyptik/jippity-deploy-testbed` run `27384594373`
+- Private E2E: `aipokalyptik/jippity-deploy-testbed` run `27384878149`
   completed successfully against the disposable WP Cloud/Pressable test site.
 - Covered live scenarios: initialization, add, change, remove, protected-path
   rejection, layered theme/plugin deployments, and failing post-deploy hook
