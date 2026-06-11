@@ -115,6 +115,7 @@ printf 'manual\n' >"$docroot/index.php"
 run_remote_deploy site-prod no-unmanaged >/dev/null
 rm -f "$docroot/index.php"
 printf 'manual replacement\n' >"$docroot/index.php"
+rm -f "$docroot/assets"
 run_remote_deploy site-prod removed-again >/dev/null
 [[ -f "$docroot/index.php" ]] || fail "removed unmanaged real file should not be deleted"
 assert_file_contains "$docroot/index.php" "manual replacement"
@@ -124,3 +125,74 @@ assert_symlink_target "$docroot/other" ".github-ssh-deploy/deployments/other-pro
 run_remote_deploy site-prod no-other >/dev/null
 assert_symlink_target "$docroot/other" ".github-ssh-deploy/deployments/other-prod/current/other"
 assert_symlink_target "$docroot/index.php" ".github-ssh-deploy/deployments/site-prod/current/index.php"
+
+docroot="$tmpdir/boundary-docroot"
+boundaries="$tmpdir/boundary-boundaries"
+base="$docroot/.github-ssh-deploy/deployments/site-prod"
+mkdir -p "$base/incoming/parent-release/wp-content/plugins/foo"
+mkdir -p "$base/incoming/child-release/wp-content/plugins/foo"
+printf 'parent claim\n' >"$base/incoming/parent-release/wp-content/plugins/foo/foo.php"
+printf 'child claim\n' >"$base/incoming/child-release/wp-content/plugins/foo/foo.php"
+
+printf '.\n./wp-content\n' >"$boundaries"
+run_remote_deploy site-prod parent-release >/dev/null
+assert_symlink_target "$docroot/wp-content/plugins" "../.github-ssh-deploy/deployments/site-prod/current/wp-content/plugins"
+
+printf '.\n./wp-content\n./wp-content/plugins\n' >"$boundaries"
+run_remote_deploy site-prod child-release >/dev/null
+[[ ! -L "$docroot/wp-content/plugins" ]] || fail "parent claim symlink should be removed before child claim is created"
+assert_symlink_target "$docroot/wp-content/plugins/foo" "../../.github-ssh-deploy/deployments/site-prod/current/wp-content/plugins/foo"
+assert_file_contains "$docroot/wp-content/plugins/foo/foo.php" "child claim"
+
+docroot="$tmpdir/reverse-boundary-docroot"
+boundaries="$tmpdir/reverse-boundary-boundaries"
+base="$docroot/.github-ssh-deploy/deployments/site-prod"
+mkdir -p "$base/incoming/child-release/wp-content/plugins/foo"
+mkdir -p "$base/incoming/parent-release/wp-content/plugins/foo"
+printf 'child claim\n' >"$base/incoming/child-release/wp-content/plugins/foo/foo.php"
+printf 'parent claim\n' >"$base/incoming/parent-release/wp-content/plugins/foo/foo.php"
+
+printf '.\n./wp-content\n./wp-content/plugins\n' >"$boundaries"
+run_remote_deploy site-prod child-release >/dev/null
+assert_symlink_target "$docroot/wp-content/plugins/foo" "../../.github-ssh-deploy/deployments/site-prod/current/wp-content/plugins/foo"
+
+printf '.\n./wp-content\n' >"$boundaries"
+run_remote_deploy site-prod parent-release >/dev/null
+[[ ! -L "$docroot/wp-content/plugins/foo" ]] || fail "child claim symlink should be removed after parent claim is created"
+assert_symlink_target "$docroot/wp-content/plugins" "../.github-ssh-deploy/deployments/site-prod/current/wp-content/plugins"
+assert_file_contains "$docroot/wp-content/plugins/foo/foo.php" "parent claim"
+
+docroot="$tmpdir/nonexact-cleanup-docroot"
+boundaries="$tmpdir/nonexact-cleanup-boundaries"
+base="$docroot/.github-ssh-deploy/deployments/site-prod"
+mkdir -p "$base/incoming/with-assets/assets" "$base/incoming/no-assets/index.php"
+printf 'asset\n' >"$base/incoming/with-assets/assets/app.css"
+printf 'index\n' >"$base/incoming/no-assets/index.php/index.php"
+
+printf '.\n' >"$boundaries"
+run_remote_deploy site-prod with-assets >/dev/null
+rm -f "$docroot/assets"
+ln -s ".github-ssh-deploy/deployments/site-prod/current/assets-extra" "$docroot/assets"
+run_remote_deploy site-prod no-assets >/dev/null
+assert_symlink_target "$docroot/assets" ".github-ssh-deploy/deployments/site-prod/current/assets-extra"
+
+docroot="$tmpdir/foreign-owner-docroot"
+boundaries="$tmpdir/foreign-owner-boundaries"
+base="$docroot/.github-ssh-deploy/deployments/site-prod"
+other_base="$docroot/.github-ssh-deploy/deployments/other-prod"
+mkdir -p "$base/incoming/prior/index.php" "$base/incoming/claim-assets/assets" "$other_base/current/assets"
+printf 'prior\n' >"$base/incoming/prior/index.php/index.php"
+printf 'wanted\n' >"$base/incoming/claim-assets/assets/app.css"
+printf 'other\n' >"$other_base/current/assets/app.css"
+
+printf '.\n' >"$boundaries"
+run_remote_deploy site-prod prior >/dev/null
+rm -rf "$docroot/assets"
+ln -s ".github-ssh-deploy/deployments/other-prod/current/assets" "$docroot/assets"
+foreign_stderr="$tmpdir/foreign-owner.stderr"
+if run_remote_deploy site-prod claim-assets 2>"$foreign_stderr"; then
+  fail "deploy should reject claim owned by another deployment"
+fi
+grep -F "claim owned by another deployment: assets" "$foreign_stderr" >/dev/null || fail "missing foreign owner error"
+assert_symlink_target "$base/current" "releases/prior"
+assert_symlink_target "$docroot/assets" ".github-ssh-deploy/deployments/other-prod/current/assets"

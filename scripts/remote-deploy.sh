@@ -126,6 +126,7 @@ reconcile_new_claims() {
     tmp_link="$parent_dir/.${public_path##*/}.github-ssh-deploy.$$"
 
     mkdir -p -- "$parent_dir"
+    reject_foreign_deployment_claim "$deployment_id" "$claim" "$public_path"
     rm -f -- "$tmp_link"
     ln -s "$target" "$tmp_link"
     rm -rf -- "$public_path"
@@ -147,20 +148,47 @@ compute_removed_claims() {
   rm -f -- "$old_sorted" "$new_sorted"
 }
 
-target_points_into_current() {
-  local docroot="$1"
-  local deployment_id="$2"
-  local target="$3"
-  local relative_prefix=".github-ssh-deploy/deployments/$deployment_id/current"
-  local absolute_prefix="$docroot/$relative_prefix"
+deployment_owner_from_target() {
+  local target="$1"
 
-  case "$target" in
-    "$relative_prefix"|"$relative_prefix"/*|*/"$relative_prefix"|*/"$relative_prefix"/*|"$absolute_prefix"|"$absolute_prefix"/*)
-      return 0
-      ;;
-  esac
+  if [[ "$target" =~ (^|/)\.github-ssh-deploy/deployments/([^/]+)/current($|/) ]]; then
+    printf '%s\n' "${BASH_REMATCH[2]}"
+    return 0
+  fi
 
   return 1
+}
+
+reject_foreign_deployment_claim() {
+  local deployment_id="$1"
+  local claim="$2"
+  local public_path="$3"
+  local target
+  local owner
+
+  [[ -L "$public_path" ]] || return 0
+
+  target="$(readlink "$public_path")"
+  if owner="$(deployment_owner_from_target "$target")" && [[ "$owner" != "$deployment_id" ]]; then
+    die "claim owned by another deployment: $claim"
+  fi
+}
+
+remove_exact_claim_symlink() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local claim="$3"
+  local public_path="$docroot/$claim"
+  local target
+  local expected_target
+
+  [[ -L "$public_path" ]] || return 0
+
+  target="$(readlink "$public_path")"
+  expected_target="$(public_symlink_target "$deployment_id" "$claim")"
+  if [[ "$target" == "$expected_target" ]]; then
+    rm -f -- "$public_path"
+  fi
 }
 
 cleanup_removed_claims() {
@@ -168,20 +196,82 @@ cleanup_removed_claims() {
   local deployment_id="$2"
   local removed_claims_file="$3"
   local claim
-  local public_path
-  local target
 
   while IFS= read -r claim || [[ -n "$claim" ]]; do
     [[ -n "$claim" ]] || continue
-
-    public_path="$docroot/$claim"
-    [[ -L "$public_path" ]] || continue
-
-    target="$(readlink "$public_path")"
-    if target_points_into_current "$docroot" "$deployment_id" "$target"; then
-      rm -f -- "$public_path"
-    fi
+    remove_exact_claim_symlink "$docroot" "$deployment_id" "$claim"
   done <"$removed_claims_file"
+}
+
+claims_overlap() {
+  local left="$1"
+  local right="$2"
+
+  [[ "$left" == "$right" || "$left" == "$right/"* || "$right" == "$left/"* ]]
+}
+
+cleanup_overlapping_removed_claims() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local removed_claims_file="$3"
+  local new_claims_file="$4"
+  local removed_claim
+  local new_claim
+
+  while IFS= read -r removed_claim || [[ -n "$removed_claim" ]]; do
+    [[ -n "$removed_claim" ]] || continue
+
+    while IFS= read -r new_claim || [[ -n "$new_claim" ]]; do
+      [[ -n "$new_claim" ]] || continue
+
+      if claims_overlap "$removed_claim" "$new_claim"; then
+        remove_exact_claim_symlink "$docroot" "$deployment_id" "$removed_claim"
+        break
+      fi
+    done <"$new_claims_file"
+  done <"$removed_claims_file"
+}
+
+discover_materialized_public_claims() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local output_file="$3"
+  local claims_tmp="$output_file.tmp.$$"
+  local link_path
+  local claim
+  local target
+  local expected_target
+
+  rm -f -- "$claims_tmp"
+  : >"$claims_tmp"
+
+  while IFS= read -r -d '' link_path; do
+    claim="${link_path#"$docroot"/}"
+
+    if [[ "$claim" == *$'\n'* ]]; then
+      rm -f -- "$claims_tmp"
+      die "unsupported newline in public symlink path"
+    fi
+
+    target="$(readlink "$link_path")"
+    expected_target="$(public_symlink_target "$deployment_id" "$claim")"
+    if [[ "$target" == "$expected_target" ]]; then
+      printf '%s\n' "$claim"
+    fi
+  done < <(find "$docroot" -path "$docroot/.github-ssh-deploy" -prune -o -type l -print0 2>/dev/null) >"$claims_tmp"
+
+  sort -u "$claims_tmp" >"$output_file"
+  rm -f -- "$claims_tmp"
+}
+
+combine_claims() {
+  local output_file="$1"
+  shift
+  local combined_tmp="$output_file.tmp.$$"
+
+  rm -f -- "$combined_tmp"
+  cat "$@" | sort -u >"$combined_tmp"
+  mv "$combined_tmp" "$output_file"
 }
 
 normalize_public_path() {
@@ -441,6 +531,8 @@ main() {
   local old_claims_file="$base/old_claims"
   local new_claims_file="$base/new_claims"
   local removed_claims_file="$base/removed_claims"
+  local old_release_claims_file="$base/old_release_claims.$$"
+  local materialized_claims_file="$base/materialized_claims.$$"
   local current_target=""
 
   mkdir -p "$incoming_dir" "$releases_dir"
@@ -462,10 +554,13 @@ main() {
 
   if [[ -L "$base/current" ]]; then
     current_target="$(readlink "$base/current")"
-    compute_claims "$base/$current_target" "$boundaries_file" "$old_claims_file"
+    compute_claims "$base/$current_target" "$boundaries_file" "$old_release_claims_file"
   else
-    : >"$old_claims_file"
+    : >"$old_release_claims_file"
   fi
+  discover_materialized_public_claims "$docroot" "$deployment_id" "$materialized_claims_file"
+  combine_claims "$old_claims_file" "$old_release_claims_file" "$materialized_claims_file"
+  rm -f -- "$old_release_claims_file" "$materialized_claims_file"
 
   compute_claims "$incoming_release" "$boundaries_file" "$new_claims_file"
   validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
@@ -473,6 +568,7 @@ main() {
 
   mv "$incoming_release" "$release_dir"
   touch "$release_dir"
+  cleanup_overlapping_removed_claims "$docroot" "$deployment_id" "$removed_claims_file" "$new_claims_file"
   reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file"
   switch_current "$base" "$release_id"
   [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
