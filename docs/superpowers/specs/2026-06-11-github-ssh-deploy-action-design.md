@@ -17,6 +17,14 @@ The target environment has these constraints:
 
 The action should make deploys simple for users while avoiding direct, partial rsync into live files.
 
+## Core Design Principle
+
+Write as little custom code as possible, but as much as necessary for readability and correctness.
+
+The action should lean on standard host tools for work they already do well: `rsync` for transfer, `find` for discovery, `flock` for locking, `realpath` and `readlink` for path resolution, and `mv` for atomic replacement. Custom logic should be limited to the deploy-specific decisions those tools do not provide: claim compression, protection checks, symlink reconciliation, rollback selection, and GitHub Action input handling.
+
+Small, readable Bash functions are preferred over clever one-liners. A helper binary or additional runtime should only be introduced if the Bash implementation becomes harder to verify than the dependency it replaces.
+
 ## User Experience
 
 A repository can deploy with a workflow like this:
