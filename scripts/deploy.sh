@@ -165,10 +165,14 @@ main() {
   source="$(trim "$source")"
   keep_releases="$(trim "$keep_releases")"
 
-  [[ "$port" =~ ^[0-9]+$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )) || die "port must be an integer from 1 to 65535"
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+    die "port must be an integer from 1 to 65535"
+  fi
   [[ -n "$docroot" ]] || die "docroot must not be empty"
   [[ -n "$source" ]] || die "source must not be empty"
-  [[ "$keep_releases" =~ ^[0-9]+$ ]] && (( 10#$keep_releases >= 1 )) || die "keep-releases must be a positive integer"
+  if [[ ! "$keep_releases" =~ ^[0-9]+$ ]] || (( 10#$keep_releases < 1 )); then
+    die "keep-releases must be a positive integer"
+  fi
 
   if [[ -z "$(trim "$deployment_id_input")" ]]; then
     deployment_id_input="${GITHUB_REPOSITORY:-}"
@@ -265,7 +269,8 @@ main() {
       env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 600 $(printf '%q' "$remote_post_deploy")"
   fi
 
-  local remote_deploy_command="bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases")"
+  local remote_deploy_command
+  remote_deploy_command="bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases")"
   if [[ -n "$local_post_deploy" ]]; then
     remote_deploy_command+=" --post-deploy-file $(printf '%q' "$remote_post_deploy")"
   fi

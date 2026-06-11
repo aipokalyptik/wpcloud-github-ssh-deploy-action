@@ -309,6 +309,7 @@ discover_materialized_public_claims() {
   rm -f -- "$claims_tmp"
   : >"$claims_tmp"
 
+  # shellcheck disable=SC2094
   { find "$docroot" -path "$docroot/.github-ssh-deploy" -prune -o -type l -print0 2>/dev/null || true; } |
   while IFS= read -r -d '' link_path; do
     claim="${link_path#"$docroot"/}"
@@ -505,6 +506,7 @@ compute_claims() {
     return 0
   fi
 
+  # shellcheck disable=SC2094
   find "$release_tree" \( -type f -or -type l \) -print0 |
   while IFS= read -r -d '' release_file; do
     public_path="${release_file#"$release_tree"/}"
@@ -653,7 +655,9 @@ main() {
   if [[ -n "$rollback_to" ]]; then
     [[ -z "$release_id" ]] || die "--release-id cannot be used with --rollback-to"
     if [[ -n "$keep_releases" ]]; then
-      [[ "$keep_releases" =~ ^[0-9]+$ ]] && ((10#$keep_releases >= 1)) || die "keep-releases must be a positive integer"
+      if [[ ! "$keep_releases" =~ ^[0-9]+$ ]] || ((10#$keep_releases < 1)); then
+        die "keep-releases must be a positive integer"
+      fi
     fi
     [[ -z "$post_deploy_file" ]] || die "--post-deploy-file cannot be used with --rollback-to"
     ((print_claims == 0)) || die "--print-claims cannot be used with --rollback-to"
@@ -663,7 +667,9 @@ main() {
   fi
 
   require_id "release-id" "$release_id"
-  [[ "$keep_releases" =~ ^[0-9]+$ ]] && ((10#$keep_releases >= 1)) || die "keep-releases must be a positive integer"
+  if [[ ! "$keep_releases" =~ ^[0-9]+$ ]] || ((10#$keep_releases < 1)); then
+    die "keep-releases must be a positive integer"
+  fi
 
   local base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local incoming_dir="$base/incoming"
