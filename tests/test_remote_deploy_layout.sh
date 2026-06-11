@@ -44,6 +44,7 @@ run_remote_deploy_with_post_deploy() {
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
+original_path="$PATH"
 
 missing_flock_path="$tmpdir/no-flock-bin"
 mkdir -p "$missing_flock_path"
@@ -59,38 +60,11 @@ if PATH="$missing_flock_path" /bin/bash "$remote_deploy" \
 fi
 grep -Fq "flock is required" "$missing_flock_err" || fail "missing flock failure should be explicit"
 
-flock_shim_dir="$tmpdir/bin"
-mkdir -p "$flock_shim_dir"
-cat >"$flock_shim_dir/flock" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-
-operation="lock"
-if [[ "${1:-}" == "-x" ]]; then
-  shift
-elif [[ "${1:-}" == "-u" ]]; then
-  operation="unlock"
-  shift
+PATH="$original_path"
+if ! command -v flock >/dev/null 2>&1; then
+  echo "flock not found; skipping layout tests that require real flock" >&2
+  exit 0
 fi
-
-fd="${1:-}"
-[[ "$fd" =~ ^[0-9]+$ ]] || {
-  echo "test flock shim: fd argument required" >&2
-  exit 64
-}
-
-python3 - "$operation" "$fd" <<'PY'
-import fcntl
-import sys
-
-operation = sys.argv[1]
-fd = int(sys.argv[2])
-flag = fcntl.LOCK_UN if operation == "unlock" else fcntl.LOCK_EX
-fcntl.flock(fd, flag)
-PY
-SH
-chmod +x "$flock_shim_dir/flock"
-export PATH="$flock_shim_dir:$PATH"
 
 docroot="$tmpdir/docroot"
 base="$docroot/.github-ssh-deploy/deployments/site-prod"

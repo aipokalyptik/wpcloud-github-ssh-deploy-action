@@ -81,8 +81,9 @@ prune_releases() {
   local release_path
   local release_name
 
-  { find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -exec ls -dt {} + 2>/dev/null || true; } |
-  while IFS= read -r release_path; do
+  { find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' 2>/dev/null || true; } |
+  sort -rn |
+  while IFS=$'\t' read -r _ release_path; do
     release_name="${release_path##*/}"
     [[ "$release_name" == "$active_release" ]] && continue
 

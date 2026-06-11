@@ -109,8 +109,11 @@ The deployment namespace allows multiple repositories to deploy independent laye
 The action never rsyncs into live public files. It uploads a complete new release into:
 
 ```text
-/srv/htdocs/.github-ssh-deploy/deployments/<deployment-id>/releases/<release-id>/
+/srv/htdocs/.github-ssh-deploy/deployments/<deployment-id>/incoming/<release-id>/
 ```
+
+The remote helper promotes the complete incoming tree to
+`releases/<release-id>` before switching `current`.
 
 Then it switches:
 
@@ -263,17 +266,18 @@ A future Go helper is acceptable if claim planning becomes too complex, but v1 s
 
 1. Establish SSH using the configured username and password.
 2. Acquire a remote deploy lock with `flock`.
-3. Resolve the real docroot path.
-4. Create `.github-ssh-deploy/deployments/<deployment-id>/releases/<release-id>`.
+3. Use the configured docroot path as the deployment base.
+4. Create `.github-ssh-deploy/deployments/<deployment-id>/incoming/<release-id>`.
 5. Upload the repository snapshot with `rsync`.
-6. Compute old and new compressed claim sets.
-7. Probe protected anchors and dynamic sticky-bit boundaries.
-8. Create or reclaim public symlinks for new claims.
-9. Atomically switch `.github-ssh-deploy/deployments/<deployment-id>/current` to the new release.
-10. Remove stale action-managed public symlinks that no longer exist in the new release.
-11. Run post-deploy commands.
-12. Prune old releases, keeping the configured count.
-13. Release the lock.
+6. Promote the incoming tree to `releases/<release-id>`.
+7. Compute old and new compressed claim sets.
+8. Probe protected anchors and dynamic sticky-bit boundaries.
+9. Create or reclaim public symlinks for new claims.
+10. Atomically switch `.github-ssh-deploy/deployments/<deployment-id>/current` to the new release.
+11. Remove stale action-managed public symlinks that no longer exist in the new release.
+12. Run post-deploy commands.
+13. Prune old releases, keeping the configured count.
+14. Release the lock.
 
 ## Rollback
 
@@ -313,6 +317,6 @@ Tests should cover:
 - stale symlink cleanup after flip,
 - refusal to remove unmanaged real files,
 - tampered symlink reclaim for wanted claims,
-- real docroot resolution,
+- configured docroot usage,
 - atomic symlink flip command probing,
 - rollback claim reconciliation.
