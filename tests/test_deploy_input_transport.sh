@@ -79,6 +79,16 @@ assert_contains "remote-deploy owner-example-repo release-test" "$stderr"
 assert_contains "env SSHPASS=REDACTED sshpass -e" "$stderr"
 assert_not_contains "secret-password" "$stderr"
 
+INPUT_POST_DEPLOY=$'printf "one|two\\n" > post-marker\nprintf "done\\n" >> post-marker' \
+run_deploy "$stdout" "$stderr"
+assert_contains "post_deploy=provided" "$stderr"
+assert_contains "remote_post_deploy=/srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/post-deploy/release-test.sh" "$stderr"
+assert_contains "post-deploy-upload" "$stderr"
+assert_contains "post-deploy-chmod" "$stderr"
+assert_contains "--post-deploy-file\\ /srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/post-deploy/release-test.sh" "$stderr"
+assert_not_contains 'printf "one|two' "$stderr"
+unset INPUT_POST_DEPLOY
+
 INPUT_PASSWORD='p@ss word!*' run_deploy "$stdout" "$stderr"
 assert_contains "::add-mask::p@ss word!*" "$stdout"
 assert_contains "env SSHPASS=REDACTED sshpass -e" "$stderr"

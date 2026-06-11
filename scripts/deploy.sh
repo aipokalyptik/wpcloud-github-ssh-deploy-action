@@ -8,7 +8,8 @@ usage() {
 Usage: deploy.sh [--help|--version]
 
 Upload a repository snapshot to a remote staging path over SSH/rsync.
-Remote release claiming and flipping are intentionally not implemented yet.
+Optional INPUT_POST_DEPLOY content is uploaded as a bash hook and run from the
+remote docroot after the new release becomes current.
 USAGE
 }
 
@@ -211,6 +212,8 @@ main() {
   local remote_base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local remote_release="$remote_base/incoming/$release_id"
   local remote_script="$remote_base/remote-deploy.sh"
+  local remote_post_deploy="$remote_base/post-deploy/$release_id.sh"
+  local local_post_deploy=""
   local local_script_dir
   local_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local source_path="$source"
@@ -235,10 +238,15 @@ main() {
   info "release_id=$release_id"
   info "remote_release=$remote_release"
   info "remote_script=$remote_script"
-  [[ -z "$post_deploy" ]] || info "post_deploy=provided"
+  if [[ -n "$(trim "$post_deploy")" ]]; then
+    local_post_deploy="$tmpdir/post-deploy.sh"
+    printf '%s' "$post_deploy" >"$local_post_deploy"
+    info "post_deploy=provided"
+    info "remote_post_deploy=$remote_post_deploy"
+  fi
 
   run_or_print "mkdir" \
-    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "mkdir -p $(printf '%q' "$remote_release")"
+    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "mkdir -p $(printf '%q' "$remote_release") $(printf '%q' "${remote_post_deploy%/*}")"
 
   run_or_print "rsync" \
     env "SSHPASS=$password" sshpass -e rsync -az --delete -e "$ssh_command" "$source_path" "$username@$host:$remote_release/"
@@ -249,9 +257,22 @@ main() {
   run_or_print "remote-script-chmod" \
     env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 700 $(printf '%q' "$remote_script")"
 
+  if [[ -n "$local_post_deploy" ]]; then
+    run_or_print "post-deploy-upload" \
+      env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_post_deploy" "$username@$host:$remote_post_deploy"
+
+    run_or_print "post-deploy-chmod" \
+      env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 600 $(printf '%q' "$remote_post_deploy")"
+  fi
+
+  local remote_deploy_command="bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases")"
+  if [[ -n "$local_post_deploy" ]]; then
+    remote_deploy_command+=" --post-deploy-file $(printf '%q' "$remote_post_deploy")"
+  fi
+
   run_or_print "remote-deploy $deployment_id $release_id" \
     env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" \
-      "bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases")"
+      "$remote_deploy_command"
 }
 
 password=""

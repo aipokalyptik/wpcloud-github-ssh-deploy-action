@@ -5,11 +5,15 @@ readonly VERSION="0.3.0-claim-compression"
 
 usage() {
   cat <<'USAGE'
-Usage: remote-deploy.sh --docroot PATH --deployment-id ID --release-id ID --keep-releases N [--print-claims]
+Usage: remote-deploy.sh --docroot PATH --deployment-id ID --release-id ID --keep-releases N [--post-deploy-file PATH] [--print-claims]
 
 Promote an uploaded incoming release into the deployment namespace and update current.
 
 Options:
+  --post-deploy-file PATH
+                  Run this bash command file from the docroot after current is
+                  updated and stale symlinks are cleaned up. Failure exits
+                  nonzero without rolling back the active release.
   --print-claims  Print compressed claims for the incoming release and exit without
                   promoting the release or changing current.
 USAGE
@@ -84,6 +88,16 @@ prune_releases() {
 
     rm -rf -- "$release_path"
   done < <(find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -exec ls -dt {} + 2>/dev/null)
+}
+
+run_post_deploy() {
+  local docroot="$1"
+  local post_deploy_file="$2"
+
+  [[ -n "$post_deploy_file" ]] || return 0
+  [[ -f "$post_deploy_file" ]] || die "post-deploy file does not exist: $post_deploy_file"
+
+  (cd "$docroot" && bash -e "$post_deploy_file")
 }
 
 public_symlink_target() {
@@ -490,6 +504,7 @@ main() {
   local deployment_id=""
   local release_id=""
   local keep_releases=""
+  local post_deploy_file=""
   local print_claims=0
 
   while (($#)); do
@@ -522,6 +537,11 @@ main() {
         keep_releases="$2"
         shift 2
         ;;
+      --post-deploy-file)
+        (($# >= 2)) || die "--post-deploy-file requires a value"
+        post_deploy_file="$2"
+        shift 2
+        ;;
       --print-claims)
         print_claims=1
         shift
@@ -536,6 +556,7 @@ main() {
   deployment_id="$(trim "$deployment_id")"
   release_id="$(trim "$release_id")"
   keep_releases="$(trim "$keep_releases")"
+  post_deploy_file="$(trim "$post_deploy_file")"
 
   [[ -n "$docroot" ]] || die "docroot is required"
   require_id "deployment-id" "$deployment_id"
@@ -598,6 +619,7 @@ main() {
   switch_current "$base" "$release_id"
   [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
   cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
+  run_post_deploy "$docroot" "$post_deploy_file"
   prune_releases "$releases_dir" "$keep_releases" "$release_id"
 
   echo "remote-deploy.sh: current=releases/$release_id" >&2
