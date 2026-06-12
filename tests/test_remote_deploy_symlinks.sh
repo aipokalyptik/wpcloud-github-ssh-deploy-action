@@ -3,27 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 remote_deploy="$repo_root/scripts/remote-deploy.sh"
-
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_file_contains() {
-  local file="$1"
-  local expected="$2"
-  [[ -f "$file" ]] || fail "missing file: $file"
-  grep -Fq -- "$expected" "$file" || fail "expected '$expected' in $file"
-}
-
-assert_symlink_target() {
-  local link="$1"
-  local expected="$2"
-  [[ -L "$link" ]] || fail "expected symlink: $link"
-  local target
-  target="$(readlink "$link")"
-  [[ "$target" == "$expected" ]] || fail "expected $link -> $expected, got $target"
-}
+. "$repo_root/tests/lib.sh"
 
 run_remote_deploy() {
   local deployment_id="$1"
@@ -41,45 +21,12 @@ run_remote_deploy() {
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-exchange_helper="$tmpdir/exchange-helper"
-cat >"$exchange_helper" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-old="$1"
-new="$2"
-tmp="${old}.swap.$$"
-mv -T -- "$old" "$tmp"
-mv -T -- "$new" "$old"
-mv -T -- "$tmp" "$new"
-SH
-chmod +x "$exchange_helper"
-if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
-  exchange_helper="$repo_root/helpers/bin/linux-amd64/exchange-rename"
-fi
+exchange_helper="$(make_exchange_helper "$tmpdir" "$repo_root")"
 default_exchange_helper="$exchange_helper"
 
 flock_shim_dir="$tmpdir/bin"
-mkdir -p "$flock_shim_dir"
-printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n' >"$flock_shim_dir/flock"
-cat >"$flock_shim_dir/mv" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-args=()
-no_target=0
-for arg in "$@"; do
-  case "$arg" in
-    -T|--no-target-directory) no_target=1 ;;
-    *) args+=("$arg") ;;
-  esac
-done
-if ((no_target)) && ((${#args[@]} >= 2)); then
-  dest="${args[$((${#args[@]} - 1))]}"
-  rm -rf -- "$dest"
-fi
-/bin/mv "${args[@]}"
-SH
-chmod +x "$flock_shim_dir/flock"
-chmod +x "$flock_shim_dir/mv"
+install_flock_shim "$flock_shim_dir"
+install_mv_t_shim "$flock_shim_dir"
 export PATH="$flock_shim_dir:$PATH"
 
 docroot="$tmpdir/docroot"

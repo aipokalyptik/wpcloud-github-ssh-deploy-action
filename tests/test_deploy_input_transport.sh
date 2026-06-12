@@ -3,25 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 deploy="$repo_root/scripts/deploy.sh"
-
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_contains() {
-  local needle="$1"
-  local file="$2"
-  grep -Fq -- "$needle" "$file" || fail "expected '$needle' in $file"
-}
-
-assert_not_contains() {
-  local needle="$1"
-  local file="$2"
-  if grep -Fq -- "$needle" "$file"; then
-    fail "did not expect '$needle' in $file"
-  fi
-}
+. "$repo_root/tests/lib.sh"
 
 run_deploy() {
   local stdout_file="$1"

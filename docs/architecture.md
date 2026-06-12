@@ -98,9 +98,9 @@ Tests can override protected anchors with
 
 ## Claim Compression
 
-The helper stores the latest computed claim sets in namespace state files such
-as `old_claims`, `new_claims`, and `removed_claims`. These are operational
-scratch/state files, not a deployment manifest.
+The helper computes claim sets in a per-run scratch directory under the
+deployment namespace while holding the deployment lock. These scratch files are
+removed after the run and are not a deployment manifest.
 
 There is intentionally no manifest. The helper recomputes claims from:
 
@@ -110,6 +110,11 @@ There is intentionally no manifest. The helper recomputes claims from:
 
 This allows rollback and cleanup to reason from actual remote state instead of
 trusting a stale manifest.
+
+The only durable cleanup state is `exchanged_paths`. It is written when an
+existing public path has been atomically exchanged with a deployment symlink.
+If cleanup of the exchanged-away path fails after `current` is promoted, the
+next deploy or rollback retries that cleanup before proceeding.
 
 ## Removal Behavior
 

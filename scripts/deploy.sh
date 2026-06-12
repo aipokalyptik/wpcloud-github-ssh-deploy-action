@@ -113,31 +113,26 @@ write_excludes() {
 .DS_Store
 EXCLUDES
     info "exclude_source=default"
-    return 0
+    printf '%s\n' "1"
   elif [[ "$trimmed_input" == "none" ]]; then
     : >"$output_file"
     info "exclude_source=none"
-    return 1
+    printf '%s\n' "0"
   else
     printf '%s' "$exclude_input" >"$output_file"
     info "exclude_source=input"
-    return 0
+    printf '%s\n' "1"
   fi
 }
 
 remote_arch() {
-  local host="$1"
-  local username="$2"
-  shift 2
-  local ssh_options=("$@")
-
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
-    info "dry-run: remote-arch: $(shell_join env "SSHPASS=REDACTED" sshpass -e ssh "${ssh_options[@]}" "$username@$host" uname -m)"
+    info "dry-run: remote-arch: $(shell_join env "SSHPASS=REDACTED" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m)"
     printf '%s\n' "x86_64"
     return 0
   fi
 
-  env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" uname -m
+  env "SSHPASS=$password" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
 }
 
 exchange_helper_for_arch() {
@@ -183,6 +178,32 @@ run_or_print() {
   fi
 
   "$@"
+}
+
+remote_ssh() {
+  local label="$1"
+  shift
+
+  run_or_print "$label" \
+    env "SSHPASS=$password" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" "$@"
+}
+
+remote_rsync() {
+  local label="$1"
+  shift
+  local count=$#
+  local args=("$@")
+  local options_count=$((count - 2))
+  local source_path_arg
+  local remote_path_arg
+  local rsync_options=()
+
+  ((count >= 2)) || die "remote_rsync requires a source and destination"
+  source_path_arg="${args[$((count - 2))]}"
+  remote_path_arg="${args[$((count - 1))]}"
+  rsync_options=("${args[@]:0:$options_count}")
+  run_or_print "$label" \
+    env "SSHPASS=$password" sshpass -e rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
 }
 
 main() {
@@ -278,10 +299,8 @@ main() {
   local known_hosts_file="$tmpdir/known_hosts"
   write_known_hosts "$known_hosts_input" "$host" "$port" "$known_hosts_file"
   local exclude_file="$tmpdir/rsync-excludes"
-  local use_exclude_file=0
-  if write_excludes "$exclude_input" "$exclude_file"; then
-    use_exclude_file=1
-  fi
+  local use_exclude_file
+  use_exclude_file="$(write_excludes "$exclude_input" "$exclude_file")"
 
   local remote_base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local remote_release="$remote_base/incoming/$release_id"
@@ -298,14 +317,14 @@ main() {
     source_path="$source_path/"
   fi
 
-  local ssh_options=(
+  SSH_OPTIONS=(
     -o "BatchMode=no"
     -o "UserKnownHostsFile=$known_hosts_file"
     -o "StrictHostKeyChecking=yes"
     -p "$port"
   )
-  local ssh_command
-  ssh_command="$(shell_join ssh "${ssh_options[@]}")"
+  REMOTE_LOGIN="$username@$host"
+  SSH_COMMAND="$(shell_join ssh "${SSH_OPTIONS[@]}")"
 
   info "port=$port"
   info "docroot=$docroot"
@@ -323,11 +342,10 @@ main() {
     info "remote_post_deploy=$remote_post_deploy"
   fi
 
-  run_or_print "mkdir" \
-    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "mkdir -p $(printf '%q' "$remote_release") $(printf '%q' "${remote_post_deploy%/*}")"
+  remote_ssh "mkdir" "mkdir -p $(printf '%q' "$remote_release") $(printf '%q' "${remote_post_deploy%/*}")"
 
   local arch
-  arch="$(trim "$(remote_arch "$host" "$username" "${ssh_options[@]}")")"
+  arch="$(trim "$(remote_arch)")"
   info "remote_arch=$arch"
   local local_exchange_helper
   local_exchange_helper="$(exchange_helper_for_arch "$arch" "$repo_root")"
@@ -338,40 +356,42 @@ main() {
     rsync_args+=(--exclude-from="$exclude_file")
   fi
 
-  run_or_print "rsync" \
-    env "SSHPASS=$password" sshpass -e rsync "${rsync_args[@]}" -e "$ssh_command" "$source_path" "$username@$host:$remote_release/"
+  remote_rsync "rsync" "${rsync_args[@]}" "$source_path" "$REMOTE_LOGIN:$remote_release/"
 
-  run_or_print "remote-script-upload" \
-    env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_script_dir/remote-deploy.sh" "$username@$host:$remote_script"
+  remote_rsync "remote-script-upload" -az "$local_script_dir/remote-deploy.sh" "$REMOTE_LOGIN:$remote_script"
 
-  run_or_print "remote-script-chmod" \
-    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 700 $(printf '%q' "$remote_script")"
+  remote_ssh "remote-script-chmod" "chmod 700 $(printf '%q' "$remote_script")"
 
-  run_or_print "exchange-helper-upload" \
-    env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_exchange_helper" "$username@$host:$remote_exchange_helper"
+  remote_rsync "exchange-helper-upload" -az "$local_exchange_helper" "$REMOTE_LOGIN:$remote_exchange_helper"
 
-  run_or_print "exchange-helper-chmod" \
-    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 700 $(printf '%q' "$remote_exchange_helper")"
+  remote_ssh "exchange-helper-chmod" "chmod 700 $(printf '%q' "$remote_exchange_helper")"
 
   if [[ -n "$local_post_deploy" ]]; then
-    run_or_print "post-deploy-upload" \
-      env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_post_deploy" "$username@$host:$remote_post_deploy"
+    remote_rsync "post-deploy-upload" -az "$local_post_deploy" "$REMOTE_LOGIN:$remote_post_deploy"
 
-    run_or_print "post-deploy-chmod" \
-      env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 600 $(printf '%q' "$remote_post_deploy")"
+    remote_ssh "post-deploy-chmod" "chmod 600 $(printf '%q' "$remote_post_deploy")"
   fi
 
+  local remote_deploy_args=(
+    bash "$remote_script"
+    --docroot "$docroot"
+    --deployment-id "$deployment_id"
+    --release-id "$release_id"
+    --keep-releases "$keep_releases"
+    --exchange-helper "$remote_exchange_helper"
+  )
+  if [[ -n "$local_post_deploy" ]]; then
+    remote_deploy_args+=(--post-deploy-file "$remote_post_deploy")
+  fi
   local remote_deploy_command
-  remote_deploy_command="bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases") --exchange-helper $(printf '%q' "$remote_exchange_helper")"
-  if [[ -n "$local_post_deploy" ]]; then
-    remote_deploy_command+=" --post-deploy-file $(printf '%q' "$remote_post_deploy")"
-  fi
+  remote_deploy_command="$(shell_join "${remote_deploy_args[@]}")"
 
-  run_or_print "remote-deploy $deployment_id $release_id" \
-    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" \
-      "$remote_deploy_command"
+  remote_ssh "remote-deploy $deployment_id $release_id" "$remote_deploy_command"
 }
 
 password=""
 DEPLOY_TMPDIR=""
+REMOTE_LOGIN=""
+SSH_COMMAND=""
+SSH_OPTIONS=()
 main "$@"

@@ -39,7 +39,8 @@ dotfiles and dotdirs are excluded from upload, `docroot` is `/srv/htdocs`,
 `port` is `22`, and `keep-releases` is `2`.
 
 Atomic reclaim of existing public paths currently supports Linux amd64 remote
-hosts. Unsupported remote CPU architectures fail clearly before deployment.
+hosts with standard tools including `flock` and `mv -T`. Unsupported remote
+CPU architectures or missing required tools fail clearly before deployment.
 
 ## Inputs
 

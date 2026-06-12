@@ -46,6 +46,39 @@ require_id() {
   [[ "$value" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "$name must be a normalized id"
 }
 
+RUN_SCRATCH_DIR=""
+
+cleanup_run_scratch() {
+  if [[ -n "$RUN_SCRATCH_DIR" ]]; then
+    rm -rf -- "$RUN_SCRATCH_DIR" 2>/dev/null || true
+  fi
+}
+
+require_remote_capabilities() {
+  local command_name
+  local probe_dir
+
+  for command_name in readlink flock find sort comm cut ln rm mv mkdir mktemp; do
+    command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
+  done
+
+  probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/github-ssh-deploy-mv.XXXXXX")" || die "mktemp is required"
+  : >"$probe_dir/source"
+  if ! mv -T "$probe_dir/source" "$probe_dir/dest" 2>/dev/null; then
+    rm -rf -- "$probe_dir"
+    die "atomic replacement requires mv -T"
+  fi
+  rm -rf -- "$probe_dir"
+}
+
+create_scratch_dir() {
+  local base="$1"
+
+  cleanup_run_scratch
+  RUN_SCRATCH_DIR="$(mktemp -d "$base/.tmp.XXXXXX")" || die "could not create scratch directory under $base"
+  printf '%s\n' "$RUN_SCRATCH_DIR"
+}
+
 switch_current() {
   local base="$1"
   local release_id="$2"
@@ -577,33 +610,20 @@ compute_claims() {
   rm -f -- "$claims_tmp"
 }
 
-rollback_release() {
+prepare_claim_transition() {
   local docroot="$1"
   local deployment_id="$2"
-  local rollback_to="$3"
-  local exchange_helper="$4"
-
-  local base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
-  local releases_dir="$base/releases"
-  local release_dir="$releases_dir/$rollback_to"
-  local lock_file="$base/deploy.lock"
-  local boundaries_file="$base/boundaries"
-  local protected_anchors_file="$base/protected_anchors"
-  local old_claims_file="$base/old_claims"
-  local new_claims_file="$base/new_claims"
-  local removed_claims_file="$base/removed_claims"
-  local exchanged_paths_file="$base/exchanged_paths"
-  local old_release_claims_file="$base/old_release_claims.$$"
-  local materialized_claims_file="$base/materialized_claims.$$"
+  local base="$3"
+  local target_release_dir="$4"
+  local scratch_dir="$5"
+  local boundaries_file="$scratch_dir/boundaries"
+  local protected_anchors_file="$scratch_dir/protected_anchors"
+  local old_release_claims_file="$scratch_dir/old_release_claims"
+  local materialized_claims_file="$scratch_dir/materialized_claims"
+  local old_claims_file="$scratch_dir/old_claims"
+  local new_claims_file="$scratch_dir/new_claims"
+  local removed_claims_file="$scratch_dir/removed_claims"
   local current_target=""
-
-  mkdir -p "$releases_dir"
-
-  acquire_lock "$lock_file"
-
-  [[ -d "$release_dir" ]] || die "rollback release does not exist: $release_dir"
-  cleanup_exchanged_paths "$exchanged_paths_file"
-  rm -f -- "$exchanged_paths_file"
 
   discover_boundary_claims "$docroot" "$boundaries_file"
   discover_protected_anchors "$docroot" "$protected_anchors_file"
@@ -614,22 +634,59 @@ rollback_release() {
   else
     : >"$old_release_claims_file"
   fi
+
   discover_materialized_public_claims "$docroot" "$deployment_id" "$materialized_claims_file"
   combine_claims "$old_claims_file" "$old_release_claims_file" "$materialized_claims_file"
-  rm -f -- "$old_release_claims_file" "$materialized_claims_file"
-
-  compute_claims "$release_dir" "$boundaries_file" "$new_claims_file"
+  compute_claims "$target_release_dir" "$boundaries_file" "$new_claims_file"
   validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
   compute_removed_claims "$old_claims_file" "$new_claims_file" "$removed_claims_file"
-  : >"$exchanged_paths_file"
+}
 
+apply_claim_transition() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local base="$3"
+  local release_id="$4"
+  local exchange_helper="$5"
+  local scratch_dir="$6"
+  local new_claims_file="$scratch_dir/new_claims"
+  local removed_claims_file="$scratch_dir/removed_claims"
+  local exchanged_paths_file="$base/exchanged_paths"
+
+  : >"$exchanged_paths_file"
   cleanup_overlapping_removed_claims "$docroot" "$deployment_id" "$removed_claims_file" "$new_claims_file"
   reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file" "$exchange_helper" "$exchanged_paths_file"
-  switch_current "$base" "$rollback_to"
-  [[ "$(readlink "$base/current")" == "releases/$rollback_to" ]] || die "current does not point to releases/$rollback_to"
+  switch_current "$base" "$release_id"
+  [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
   cleanup_exchanged_paths "$exchanged_paths_file"
   rm -f -- "$exchanged_paths_file"
   cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
+}
+
+rollback_release() {
+  local docroot="$1"
+  local deployment_id="$2"
+  local rollback_to="$3"
+  local exchange_helper="$4"
+
+  local base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
+  local releases_dir="$base/releases"
+  local release_dir="$releases_dir/$rollback_to"
+  local lock_file="$base/deploy.lock"
+  local exchanged_paths_file="$base/exchanged_paths"
+  local scratch_dir
+
+  mkdir -p "$releases_dir"
+
+  acquire_lock "$lock_file"
+
+  [[ -d "$release_dir" ]] || die "rollback release does not exist: $release_dir"
+  cleanup_exchanged_paths "$exchanged_paths_file"
+  rm -f -- "$exchanged_paths_file"
+
+  scratch_dir="$(create_scratch_dir "$base")"
+  prepare_claim_transition "$docroot" "$deployment_id" "$base" "$release_dir" "$scratch_dir"
+  apply_claim_transition "$docroot" "$deployment_id" "$base" "$rollback_to" "$exchange_helper" "$scratch_dir"
 
   echo "remote-deploy.sh: current=releases/$rollback_to" >&2
 }
@@ -713,8 +770,8 @@ main() {
     exchange_helper="$docroot/.github-ssh-deploy/deployments/$deployment_id/exchange-rename"
   fi
 
-  command -v readlink >/dev/null 2>&1 || die "readlink is required"
-  command -v flock >/dev/null 2>&1 || die "flock is required"
+  trap cleanup_run_scratch EXIT
+  require_remote_capabilities
 
   if [[ -n "$rollback_to" ]]; then
     [[ -z "$release_id" ]] || die "--release-id cannot be used with --rollback-to"
@@ -741,15 +798,10 @@ main() {
   local incoming_release="$incoming_dir/$release_id"
   local release_dir="$releases_dir/$release_id"
   local lock_file="$base/deploy.lock"
-  local boundaries_file="$base/boundaries"
-  local protected_anchors_file="$base/protected_anchors"
-  local old_claims_file="$base/old_claims"
-  local new_claims_file="$base/new_claims"
-  local removed_claims_file="$base/removed_claims"
   local exchanged_paths_file="$base/exchanged_paths"
-  local old_release_claims_file="$base/old_release_claims.$$"
-  local materialized_claims_file="$base/materialized_claims.$$"
-  local current_target=""
+  local scratch_dir
+  local boundaries_file
+  local new_claims_file
 
   mkdir -p "$incoming_dir" "$releases_dir"
 
@@ -759,8 +811,10 @@ main() {
   cleanup_exchanged_paths "$exchanged_paths_file"
   rm -f -- "$exchanged_paths_file"
 
+  scratch_dir="$(create_scratch_dir "$base")"
+  boundaries_file="$scratch_dir/boundaries"
+  new_claims_file="$scratch_dir/new_claims"
   discover_boundary_claims "$docroot" "$boundaries_file"
-  discover_protected_anchors "$docroot" "$protected_anchors_file"
 
   if ((print_claims)); then
     compute_claims "$incoming_release" "$boundaries_file" "$new_claims_file"
@@ -770,30 +824,10 @@ main() {
 
   [[ ! -e "$release_dir" ]] || die "release already exists: $release_dir"
 
-  if [[ -L "$base/current" ]]; then
-    current_target="$(readlink "$base/current")"
-    compute_claims "$base/$current_target" "$boundaries_file" "$old_release_claims_file"
-  else
-    : >"$old_release_claims_file"
-  fi
-  discover_materialized_public_claims "$docroot" "$deployment_id" "$materialized_claims_file"
-  combine_claims "$old_claims_file" "$old_release_claims_file" "$materialized_claims_file"
-  rm -f -- "$old_release_claims_file" "$materialized_claims_file"
-
-  compute_claims "$incoming_release" "$boundaries_file" "$new_claims_file"
-  validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
-  compute_removed_claims "$old_claims_file" "$new_claims_file" "$removed_claims_file"
-  : >"$exchanged_paths_file"
-
+  prepare_claim_transition "$docroot" "$deployment_id" "$base" "$incoming_release" "$scratch_dir"
   mv "$incoming_release" "$release_dir"
   touch "$release_dir"
-  cleanup_overlapping_removed_claims "$docroot" "$deployment_id" "$removed_claims_file" "$new_claims_file"
-  reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file" "$exchange_helper" "$exchanged_paths_file"
-  switch_current "$base" "$release_id"
-  [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
-  cleanup_exchanged_paths "$exchanged_paths_file"
-  rm -f -- "$exchanged_paths_file"
-  cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
+  apply_claim_transition "$docroot" "$deployment_id" "$base" "$release_id" "$exchange_helper" "$scratch_dir"
   run_post_deploy "$docroot" "$post_deploy_file"
   prune_releases "$releases_dir" "$keep_releases" "$release_id"
 

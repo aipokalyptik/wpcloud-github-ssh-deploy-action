@@ -3,27 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 remote_deploy="$repo_root/scripts/remote-deploy.sh"
-
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_file_contains() {
-  local file="$1"
-  local expected="$2"
-  [[ -f "$file" ]] || fail "missing file: $file"
-  grep -Fq -- "$expected" "$file" || fail "expected '$expected' in $file"
-}
-
-assert_symlink_target() {
-  local link="$1"
-  local expected="$2"
-  [[ -L "$link" ]] || fail "expected symlink: $link"
-  local target
-  target="$(readlink "$link")"
-  [[ "$target" == "$expected" ]] || fail "expected $link -> $expected, got $target"
-}
+. "$repo_root/tests/lib.sh"
 
 run_remote_deploy() {
   "$remote_deploy" \
@@ -47,42 +27,10 @@ run_remote_deploy_with_post_deploy() {
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-exchange_helper="$tmpdir/exchange-helper"
-cat >"$exchange_helper" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-old="$1"
-new="$2"
-tmp="${old}.swap.$$"
-mv -T -- "$old" "$tmp"
-mv -T -- "$new" "$old"
-mv -T -- "$tmp" "$new"
-SH
-chmod +x "$exchange_helper"
-if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
-  exchange_helper="$repo_root/helpers/bin/linux-amd64/exchange-rename"
-fi
+exchange_helper="$(make_exchange_helper "$tmpdir" "$repo_root")"
 
 mv_shim_dir="$tmpdir/mv-shim-bin"
-mkdir -p "$mv_shim_dir"
-cat >"$mv_shim_dir/mv" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-args=()
-no_target=0
-for arg in "$@"; do
-  case "$arg" in
-    -T|--no-target-directory) no_target=1 ;;
-    *) args+=("$arg") ;;
-  esac
-done
-if ((no_target)) && ((${#args[@]} >= 2)); then
-  dest="${args[$((${#args[@]} - 1))]}"
-  rm -rf -- "$dest"
-fi
-/bin/mv "${args[@]}"
-SH
-chmod +x "$mv_shim_dir/mv"
+install_mv_t_shim "$mv_shim_dir"
 export PATH="$mv_shim_dir:$PATH"
 original_path="$PATH"
 
@@ -105,6 +53,35 @@ if PATH="$missing_flock_path" /bin/bash "$remote_deploy" \
   fail "deploy should fail when flock is unavailable"
 fi
 grep -Fq "flock is required" "$missing_flock_err" || fail "missing flock failure should be explicit"
+
+missing_mv_t_path="$tmpdir/no-mv-t-bin"
+mkdir -p "$missing_mv_t_path"
+for required_command in readlink find sort comm cut ln rm mkdir mktemp; do
+  ln -s "$(command -v "$required_command")" "$missing_mv_t_path/$required_command"
+done
+install_flock_shim "$missing_mv_t_path"
+cat >"$missing_mv_t_path/mv" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == "-T" || "$arg" == "--no-target-directory" ]]; then
+    echo "mv: unsupported option $arg" >&2
+    exit 1
+  fi
+done
+/bin/mv "$@"
+SH
+chmod +x "$missing_mv_t_path/mv"
+missing_mv_t_err="$tmpdir/missing-mv-t.err"
+if PATH="$missing_mv_t_path" /bin/bash "$remote_deploy" \
+  --docroot "$tmpdir/no-mv-t-docroot" \
+  --deployment-id site-prod \
+  --release-id no-mv-t-release \
+  --keep-releases 1 \
+  2>"$missing_mv_t_err"; then
+  fail "deploy should fail when mv -T is unavailable"
+fi
+grep -Fq "atomic replacement requires mv -T" "$missing_mv_t_err" || fail "missing mv -T failure should be explicit"
 
 PATH="$original_path"
 if ! command -v flock >/dev/null 2>&1; then
