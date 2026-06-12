@@ -33,10 +33,10 @@ The transport test uses `GITHUB_SSH_DEPLOY_DRY_RUN=1` to validate generated
 commands and input handling without connecting to a host, including default,
 replacement, and disabled upload excludes.
 
-`scripts/check-exchange-helper.sh` rebuilds the committed Linux amd64
-`exchange-rename` helper from source, verifies the binary matches, checks that
-the source uses `renameat2(RENAME_EXCHANGE)` directly, and runs a smoke test on
-Linux amd64 CI.
+`scripts/check-exchange-helper.sh` rebuilds the Linux amd64 `exchange-rename`
+helper from source, verifies the committed and rebuilt binaries are static ELF
+artifacts, checks that the source uses `renameat2(RENAME_EXCHANGE)` directly,
+and runs smoke tests for both helpers on Linux amd64 CI.
 
 ## GitHub CI
 
