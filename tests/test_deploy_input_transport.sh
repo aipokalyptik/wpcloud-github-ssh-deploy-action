@@ -36,7 +36,10 @@ if command -v ssh-keygen >/dev/null 2>&1 && command -v ssh-agent >/dev/null 2>&1
   askpass="$agent_tmp/askpass"
   ssh_keygen_output="$agent_tmp/ssh-keygen.out"
   ssh_add_stderr="$agent_tmp/ssh-add.stderr"
-  ssh-keygen -q -t ed25519 -N "test-passphrase" -C "github-ssh-deploy-test" -f "$agent_key" >"$ssh_keygen_output" 2>&1 || fail "ssh-keygen should create encrypted test key"
+  if ! ssh-keygen -q -t ed25519 -N "test-passphrase" -C "github-ssh-deploy-test" -f "$agent_key" >"$ssh_keygen_output" 2>&1; then
+    cat "$ssh_keygen_output" >&2
+    fail "ssh-keygen should create encrypted test key"
+  fi
   cat >"$askpass" <<'SH'
 #!/bin/sh
 printf '%s\n' "${TEST_KEY_PASSPHRASE:?}"
@@ -45,13 +48,19 @@ SH
   agent_output="$(ssh-agent -s)"
   eval "$agent_output" >/dev/null
   agent_pid="$SSH_AGENT_PID"
+  kill_test_agent() {
+    SSH_AGENT_PID="$agent_pid" ssh-agent -k >/dev/null 2>&1 || true
+  }
   if ! DISPLAY=none SSH_ASKPASS="$askpass" SSH_ASKPASS_REQUIRE=force TEST_KEY_PASSPHRASE="test-passphrase" ssh-add "$agent_key" </dev/null >/dev/null 2>"$ssh_add_stderr"; then
     cat "$ssh_add_stderr" >&2
-    SSH_AGENT_PID="$agent_pid" ssh-agent -k >/dev/null 2>&1 || true
+    kill_test_agent
     fail "ssh-add should load encrypted key through SSH_ASKPASS"
   fi
-  ssh-add -l | grep -Fq "github-ssh-deploy-test" || fail "ssh-agent should contain encrypted test key"
-  SSH_AGENT_PID="$agent_pid" ssh-agent -k >/dev/null 2>&1 || true
+  if ! ssh-add -l | grep -Fq "github-ssh-deploy-test"; then
+    kill_test_agent
+    fail "ssh-agent should contain encrypted test key"
+  fi
+  kill_test_agent
   unset SSH_AUTH_SOCK SSH_AGENT_PID
 else
   echo "ssh-keygen, ssh-agent, or ssh-add not found; skipping encrypted key askpass mechanism test" >&2

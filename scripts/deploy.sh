@@ -270,6 +270,8 @@ run_or_print() {
         redacted_args+=("REDACTED")
       elif [[ -n "$password" && "$arg" == "SSHPASS=$password" ]]; then
         redacted_args+=("SSHPASS=REDACTED")
+      # The passphrase should never cross argv today. Keep this as a tripwire
+      # for future command-shape changes in dry-run logging.
       elif [[ -n "$private_key_passphrase" && "$arg" == "GITHUB_SSH_DEPLOY_KEY_PASSPHRASE=$private_key_passphrase" ]]; then
         redacted_args+=("GITHUB_SSH_DEPLOY_KEY_PASSPHRASE=REDACTED")
       else
