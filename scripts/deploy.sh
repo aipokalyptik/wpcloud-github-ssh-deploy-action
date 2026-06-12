@@ -624,6 +624,12 @@ SH
   local remote_deploy_command
   remote_deploy_command="$(shell_join "${remote_deploy_args[@]}")"
 
+  # The promotion command is intentionally single-shot because post-deploy hooks
+  # may have side effects. Give hosts with aggressive SSH connection throttles a
+  # short breather after the setup/upload burst instead of retrying promotion.
+  if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" != "1" ]]; then
+    sleep "${GITHUB_SSH_DEPLOY_PROMOTION_PAUSE:-1}"
+  fi
   remote_ssh "remote-deploy $deployment_id $release_id" "$remote_deploy_command"
 }
 
