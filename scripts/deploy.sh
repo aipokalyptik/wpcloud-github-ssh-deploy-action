@@ -363,17 +363,29 @@ remote_rsync() {
   local remote_path_arg="$3"
   shift 3
   local rsync_options=("$@")
+  local attempt
 
-  if [[ "$auth_mode" == "password" ]]; then
-    run_or_print "$label" env \
-      "GITHUB_SSH_DEPLOY_PASSWORD=$password" \
-      "DISPLAY=none" \
-      "SSH_ASKPASS=$PASSWORD_ASKPASS_FILE" \
-      "SSH_ASKPASS_REQUIRE=force" \
-      rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
-  else
-    run_or_print "$label" rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
-  fi
+  for attempt in 1 2 3; do
+    if [[ "$auth_mode" == "password" ]]; then
+      if run_or_print "$label" env \
+        "GITHUB_SSH_DEPLOY_PASSWORD=$password" \
+        "DISPLAY=none" \
+        "SSH_ASKPASS=$PASSWORD_ASKPASS_FILE" \
+        "SSH_ASKPASS_REQUIRE=force" \
+        rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"; then
+        return 0
+      fi
+    else
+      if run_or_print "$label" rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"; then
+        return 0
+      fi
+    fi
+    [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]] && return 0
+    info "$label rsync attempt $attempt failed"
+    sleep "$attempt"
+  done
+
+  return 1
 }
 
 main() {
