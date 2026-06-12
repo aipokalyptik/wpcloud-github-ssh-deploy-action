@@ -273,10 +273,23 @@ remote_arch() {
       fi
     fi
     info "remote_arch attempt $attempt failed"
-    sleep "$attempt"
+    sleep "$(retry_pause_seconds "$attempt")"
   done
 
   die "remote_arch probe failed"
+}
+
+retry_pause_seconds() {
+  local attempt="$1"
+  local configured="${GITHUB_SSH_DEPLOY_RETRY_PAUSE:-}"
+
+  if [[ -n "$configured" ]]; then
+    [[ "$configured" =~ ^[0-9]+$ ]] || die "GITHUB_SSH_DEPLOY_RETRY_PAUSE must be a non-negative integer"
+    printf '%s\n' "$configured"
+    return 0
+  fi
+
+  printf '%s\n' "$attempt"
 }
 
 exchange_helper_for_arch() {
@@ -364,7 +377,7 @@ remote_ssh() {
     fi
     [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]] && return 0
     info "$label ssh attempt $attempt failed"
-    sleep "$attempt"
+    sleep "$(retry_pause_seconds "$attempt")"
   done
 
   return 1
@@ -395,7 +408,7 @@ remote_rsync() {
     fi
     [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]] && return 0
     info "$label rsync attempt $attempt failed"
-    sleep "$attempt"
+    sleep "$(retry_pause_seconds "$attempt")"
   done
 
   return 1
