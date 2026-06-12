@@ -23,6 +23,10 @@ inputs:
     description: Local source path to deploy.
     required: false
     default: .
+  exclude:
+    description: Newline-delimited rsync exclude patterns. Omit for built-in defaults; set to "none" to disable excludes.
+    required: false
+    default: ""
   keep-releases:
     description: Number of remote releases to keep.
     required: false
@@ -52,6 +56,7 @@ runs:
         INPUT_PASSWORD: ${{ inputs.password }}
         INPUT_DOCROOT: ${{ inputs.docroot }}
         INPUT_SOURCE: ${{ inputs.source }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
         INPUT_KEEP_RELEASES: ${{ inputs.keep-releases }}
         INPUT_POST_DEPLOY: ${{ inputs.post-deploy }}
         INPUT_DEPLOYMENT_ID: ${{ inputs.deployment-id }}

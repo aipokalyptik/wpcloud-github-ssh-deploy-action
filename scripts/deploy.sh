@@ -90,6 +90,41 @@ write_known_hosts() {
   [[ -s "$output_file" ]] || die "ssh-keyscan did not return a host key for $host:$port"
 }
 
+write_excludes() {
+  local exclude_input="$1"
+  local output_file="$2"
+  local trimmed_input
+  trimmed_input="$(trim "$exclude_input")"
+
+  if [[ -z "$trimmed_input" ]]; then
+    cat >"$output_file" <<'EXCLUDES'
+.git/
+.github/
+.svn/
+.hg/
+.bzr/
+.aws/
+.ssh/
+.env
+.env.*
+.npmrc
+.pypirc
+.netrc
+.DS_Store
+EXCLUDES
+    info "exclude_source=default"
+    return 0
+  elif [[ "$trimmed_input" == "none" ]]; then
+    : >"$output_file"
+    info "exclude_source=none"
+    return 1
+  else
+    printf '%s' "$exclude_input" >"$output_file"
+    info "exclude_source=input"
+    return 0
+  fi
+}
+
 cleanup() {
   if [[ -n "${DEPLOY_TMPDIR:-}" && -z "${GITHUB_SSH_DEPLOY_KEEP_TEMP:-}" && -z "${GITHUB_SSH_DEPLOY_TMPDIR:-}" ]]; then
     rm -rf "$DEPLOY_TMPDIR"
@@ -149,6 +184,7 @@ main() {
   password="${INPUT_PASSWORD:-}"
   local docroot="${INPUT_DOCROOT:-/srv/htdocs}"
   local source="${INPUT_SOURCE:-.}"
+  local exclude_input="${INPUT_EXCLUDE:-}"
   local keep_releases="${INPUT_KEEP_RELEASES:-2}"
   local post_deploy="${INPUT_POST_DEPLOY:-}"
   local deployment_id_input="${INPUT_DEPLOYMENT_ID:-}"
@@ -212,6 +248,11 @@ main() {
 
   local known_hosts_file="$tmpdir/known_hosts"
   write_known_hosts "$known_hosts_input" "$host" "$port" "$known_hosts_file"
+  local exclude_file="$tmpdir/rsync-excludes"
+  local use_exclude_file=0
+  if write_excludes "$exclude_input" "$exclude_file"; then
+    use_exclude_file=1
+  fi
 
   local remote_base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local remote_release="$remote_base/incoming/$release_id"
@@ -252,8 +293,13 @@ main() {
   run_or_print "mkdir" \
     env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "mkdir -p $(printf '%q' "$remote_release") $(printf '%q' "${remote_post_deploy%/*}")"
 
+  local rsync_args=(-az --delete)
+  if (( use_exclude_file )); then
+    rsync_args+=(--exclude-from="$exclude_file")
+  fi
+
   run_or_print "rsync" \
-    env "SSHPASS=$password" sshpass -e rsync -az --delete -e "$ssh_command" "$source_path" "$username@$host:$remote_release/"
+    env "SSHPASS=$password" sshpass -e rsync "${rsync_args[@]}" -e "$ssh_command" "$source_path" "$username@$host:$remote_release/"
 
   run_or_print "remote-script-upload" \
     env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_script_dir/remote-deploy.sh" "$username@$host:$remote_script"

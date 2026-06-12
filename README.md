@@ -34,8 +34,9 @@ jobs:
           docroot: /srv/htdocs
 ```
 
-By default, `source` is the checked-out repository root, `docroot` is
-`/srv/htdocs`, `port` is `22`, and `keep-releases` is `2`.
+By default, `source` is the checked-out repository root, common sensitive
+dotfiles and dotdirs are excluded from upload, `docroot` is `/srv/htdocs`,
+`port` is `22`, and `keep-releases` is `2`.
 
 ## Inputs
 
@@ -47,6 +48,7 @@ By default, `source` is the checked-out repository root, `docroot` is
 | `port` | No | `22` | SSH port. Must be `1` through `65535`. |
 | `docroot` | No | `/srv/htdocs` | Remote document root. |
 | `source` | No | `.` | Local path to upload. A trailing slash is applied for rsync directory contents. |
+| `exclude` | No | built-in list | Newline-delimited rsync exclude patterns. Omit for common dotfile defaults, provide a list to replace them, or set `none` to disable excludes. |
 | `keep-releases` | No | `2` | Number of remote releases to keep for this deployment namespace. Must be positive. |
 | `post-deploy` | No | | Newline-delimited Bash commands to run from the remote docroot after promotion. |
 | `deployment-id` | No | normalized repository slug | Stable deployment namespace. Use this when multiple workflows deploy to the same site. |
@@ -77,6 +79,30 @@ with:
   source: dist
   deployment-id: frontend-prod
   keep-releases: 5
+```
+
+Replace the default upload excludes:
+
+```yaml
+with:
+  host: ${{ secrets.WPCLOUD_SSH_HOST }}
+  username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
+  password: ${{ secrets.WPCLOUD_SSH_PASSWORD }}
+  exclude: |
+    .git/
+    .github/
+    secrets/
+    local-config.php
+```
+
+Disable upload excludes:
+
+```yaml
+with:
+  host: ${{ secrets.WPCLOUD_SSH_HOST }}
+  username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
+  password: ${{ secrets.WPCLOUD_SSH_PASSWORD }}
+  exclude: none
 ```
 
 Run post-deploy commands after the new release is current:
@@ -132,6 +158,12 @@ The remote helper then moves it into `releases/<release-id>`, updates
 `current` to point at that release, and reconciles public symlinks in `docroot`
 for the release claims. Release IDs are generated from the UTC time plus the
 GitHub SHA prefix unless an internal test override is set.
+
+Upload excludes are applied by `rsync` before the release reaches the remote
+host. The built-in list excludes `.git/`, `.github/`, `.svn/`, `.hg/`, `.bzr/`,
+`.aws/`, `.ssh/`, `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, and
+`.DS_Store`. It intentionally does not exclude all dotfiles, so deployable
+paths such as `.htaccess` and `.well-known/` are not blocked by default.
 
 The action does not write a manifest. It recomputes claims from the current
 release tree, the previous release tree, and deployment-owned symlinks already

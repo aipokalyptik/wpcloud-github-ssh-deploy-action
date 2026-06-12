@@ -2,7 +2,8 @@
 
 The action is a composite Bash action. `action.yml` maps inputs into environment
 variables and runs `scripts/deploy.sh`. The transport script validates inputs,
-prepares host key checking, uploads the source tree with `rsync`, uploads
+prepares host key checking, uploads the source tree with `rsync`, applies
+configured upload excludes with `--exclude-from`, uploads
 `scripts/remote-deploy.sh`, optionally uploads a post-deploy hook, and invokes
 the remote helper over password SSH.
 
@@ -52,8 +53,9 @@ Deploy and rollback are serialized with `flock` on the namespace lock file.
 
 ## Dynamic Sticky Boundaries
 
-Claims are computed from files and symlinks in the release tree. `.git` and
-`.github-ssh-deploy` content in the release are ignored.
+Claims are computed from files and symlinks in the release tree. Common VCS and
+secret dotfiles are excluded during upload by default; if callers replace or
+disable those excludes, uploaded files are treated like normal release content.
 
 By default, the helper discovers sticky boundaries with:
 

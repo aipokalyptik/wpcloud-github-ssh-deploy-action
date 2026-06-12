@@ -68,16 +68,62 @@ assert_contains "::add-mask::secret-password" "$stdout"
 assert_contains "port=22" "$stderr"
 assert_contains "docroot=/srv/htdocs" "$stderr"
 assert_contains "source=." "$stderr"
+assert_contains "exclude_source=default" "$stderr"
 assert_contains "keep_releases=2" "$stderr"
 assert_contains "deployment_id=owner-example-repo" "$stderr"
 assert_contains "ssh-keyscan -p 22 example.com" "$stderr"
 assert_contains "/srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/incoming/release-test/" "$stderr"
-assert_contains "rsync -az --delete" "$stderr"
+assert_contains "rsync -az --delete --exclude-from=" "$stderr"
 assert_contains "remote_script=/srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/remote-deploy.sh" "$stderr"
 assert_contains "scripts/remote-deploy.sh" "$stderr"
 assert_contains "remote-deploy owner-example-repo release-test" "$stderr"
 assert_contains "env SSHPASS=REDACTED sshpass -e" "$stderr"
 assert_not_contains "secret-password" "$stderr"
+
+default_exclude_tmp="$tmpdir/default-excludes"
+GITHUB_SSH_DEPLOY_TMPDIR="$default_exclude_tmp" \
+GITHUB_SSH_DEPLOY_KEEP_TEMP=1 \
+run_deploy "$stdout" "$stderr"
+assert_contains ".git/" "$default_exclude_tmp/rsync-excludes"
+assert_contains ".github/" "$default_exclude_tmp/rsync-excludes"
+assert_contains ".env.*" "$default_exclude_tmp/rsync-excludes"
+assert_contains ".DS_Store" "$default_exclude_tmp/rsync-excludes"
+
+INPUT_EXCLUDE=none run_deploy "$stdout" "$stderr"
+assert_contains "exclude_source=none" "$stderr"
+assert_not_contains "--exclude-from=" "$stderr"
+unset INPUT_EXCLUDE
+
+custom_exclude_tmp="$tmpdir/custom-excludes"
+INPUT_EXCLUDE=$'wp-content/uploads/\nlocal-config.php\n' \
+GITHUB_SSH_DEPLOY_TMPDIR="$custom_exclude_tmp" \
+GITHUB_SSH_DEPLOY_KEEP_TEMP=1 \
+run_deploy "$stdout" "$stderr"
+assert_contains "exclude_source=input" "$stderr"
+assert_contains "--exclude-from=" "$stderr"
+[[ "$(cat "$custom_exclude_tmp/rsync-excludes")" == $'wp-content/uploads/\nlocal-config.php' ]] || fail "custom excludes should replace defaults exactly"
+assert_not_contains ".git/" "$custom_exclude_tmp/rsync-excludes"
+unset INPUT_EXCLUDE
+
+if command -v rsync >/dev/null 2>&1; then
+  rsync_source="$tmpdir/rsync-source"
+  rsync_dest="$tmpdir/rsync-dest"
+  mkdir -p "$rsync_source/.git" "$rsync_source/.github" "$rsync_source/.well-known" "$rsync_dest"
+  printf 'git\n' >"$rsync_source/.git/config"
+  printf 'workflow\n' >"$rsync_source/.github/deploy.yml"
+  printf 'env\n' >"$rsync_source/.env"
+  printf 'apache\n' >"$rsync_source/.htaccess"
+  printf 'challenge\n' >"$rsync_source/.well-known/acme-challenge"
+  printf 'public\n' >"$rsync_source/index.php"
+
+  rsync -a --delete --exclude-from="$default_exclude_tmp/rsync-excludes" "$rsync_source/" "$rsync_dest/"
+  [[ ! -e "$rsync_dest/.git/config" ]] || fail "default excludes should omit .git/"
+  [[ ! -e "$rsync_dest/.github/deploy.yml" ]] || fail "default excludes should omit .github/"
+  [[ ! -e "$rsync_dest/.env" ]] || fail "default excludes should omit .env"
+  [[ -f "$rsync_dest/.htaccess" ]] || fail "default excludes should allow .htaccess"
+  [[ -f "$rsync_dest/.well-known/acme-challenge" ]] || fail "default excludes should allow .well-known/"
+  [[ -f "$rsync_dest/index.php" ]] || fail "default excludes should allow normal files"
+fi
 
 INPUT_POST_DEPLOY=$'printf "one|two\\n" > post-marker\nprintf "done\\n" >> post-marker' \
 run_deploy "$stdout" "$stderr"

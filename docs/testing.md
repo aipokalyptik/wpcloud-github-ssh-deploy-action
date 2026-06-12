@@ -29,7 +29,8 @@ scripts and tests; otherwise lint is skipped with a message.
 Most remote-helper tests use temporary docroots and internal override files for
 boundary and protected-anchor discovery. They do not require real SSH access.
 The transport test uses `GITHUB_SSH_DEPLOY_DRY_RUN=1` to validate generated
-commands and input handling without connecting to a host.
+commands and input handling without connecting to a host, including default,
+replacement, and disabled upload excludes.
 
 ## GitHub CI
 
@@ -76,6 +77,11 @@ jobs:
           known-hosts: ${{ secrets.WPCLOUD_KNOWN_HOSTS }}
           docroot: /srv/htdocs
           deployment-id: testbed-prod
+          exclude: |
+            .git/
+            .github/
+            .env
+            .env.*
           keep-releases: 3
 ```
 
@@ -109,6 +115,9 @@ Run these against a disposable or non-production site:
    pruned release.
 12. `known-hosts` succeeds with a pinned host key; omitting it falls back to
     `ssh-keyscan`.
+13. Default upload excludes keep common VCS and secret dotfiles out of the
+    release; a custom `exclude` list replaces the defaults; `exclude: none`
+    disables upload excludes.
 
 Record the workflow URL, release IDs, rollback command, and observed public
 paths in the release checklist. Do not record passwords or private host details

@@ -20,7 +20,7 @@ for script in "$repo_root/scripts/deploy.sh" "$repo_root/scripts/remote-deploy.s
   "$script" --version >/dev/null
 done
 
-for input in host port username password docroot source keep-releases post-deploy deployment-id known-hosts; do
+for input in host port username password docroot source exclude keep-releases post-deploy deployment-id known-hosts; do
   grep -Eq "^[[:space:]]{2}${input}:" "$action_file" || fail "missing input: $input"
 done
 
