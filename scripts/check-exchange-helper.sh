@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source_file="$repo_root/helpers/exchange-rename/main.go"
 binary_file="$repo_root/helpers/bin/linux-amd64/exchange-rename"
+EXPECTED_GO_VERSION="go1.26.3"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
@@ -14,6 +15,12 @@ fail() {
 
 [[ -f "$source_file" ]] || fail "missing helper source: $source_file"
 [[ -x "$binary_file" ]] || fail "missing executable helper binary: $binary_file"
+
+if ! command -v go >/dev/null 2>&1; then
+  fail "helper verification requires $EXPECTED_GO_VERSION; found no go"
+fi
+actual_go_version="$(go version | awk '{print $3}')"
+[[ "$actual_go_version" == "$EXPECTED_GO_VERSION" ]] || fail "helper verification requires $EXPECTED_GO_VERSION; found $actual_go_version"
 
 grep -Fq "SYS_RENAMEAT2" "$source_file" || fail "helper must call renameat2 directly"
 grep -Fq "RENAME_EXCHANGE = 0x2" "$source_file" || fail "helper must use RENAME_EXCHANGE"

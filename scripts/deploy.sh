@@ -198,12 +198,9 @@ remote_rsync() {
   local label="$1"
   local source_path_arg="$2"
   local remote_path_arg="$3"
-  shift
-  shift
-  shift
-  local rsync_options=()
+  shift 3
+  local rsync_options=("$@")
 
-  rsync_options=("$@")
   run_or_print "$label" \
     env "SSHPASS=$password" sshpass -e rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
 }

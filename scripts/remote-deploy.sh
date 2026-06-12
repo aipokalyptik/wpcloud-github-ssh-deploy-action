@@ -62,6 +62,13 @@ require_remote_capabilities() {
     command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
   done
 
+  probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/github-ssh-deploy-find.XXXXXX")" || die "mktemp is required"
+  if ! find "$probe_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' >/dev/null 2>&1; then
+    rm -rf -- "$probe_dir"
+    die "GNU find with -printf is required"
+  fi
+  rm -rf -- "$probe_dir"
+
   probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/github-ssh-deploy-mv.XXXXXX")" || die "mktemp is required"
   : >"$probe_dir/source"
   if ! mv -T "$probe_dir/source" "$probe_dir/dest" 2>/dev/null; then

@@ -27,6 +27,7 @@ default_exchange_helper="$exchange_helper"
 flock_shim_dir="$tmpdir/bin"
 install_flock_shim "$flock_shim_dir"
 install_mv_t_shim "$flock_shim_dir"
+install_find_printf_shim "$flock_shim_dir"
 export PATH="$flock_shim_dir:$PATH"
 
 docroot="$tmpdir/docroot"

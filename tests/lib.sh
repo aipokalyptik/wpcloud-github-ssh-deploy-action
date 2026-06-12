@@ -104,6 +104,29 @@ SH
   chmod +x "$bin_dir/mv"
 }
 
+install_find_printf_shim() {
+  local bin_dir="$1"
+
+  mkdir -p "$bin_dir"
+  cat >"$bin_dir/find" <<'SH'
+#!/bin/bash
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == "-printf" ]]; then
+    root="$1"
+    shopt -s nullglob
+    for child in "$root"/*; do
+      [[ -d "$child" ]] || continue
+      printf '0\t%s\n' "$child"
+    done
+    exit 0
+  fi
+done
+/usr/bin/find "$@"
+SH
+  chmod +x "$bin_dir/find"
+}
+
 assert_no_durable_claim_scratch() {
   local base="$1"
   local scratch_name

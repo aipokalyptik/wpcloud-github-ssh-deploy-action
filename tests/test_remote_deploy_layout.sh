@@ -31,6 +31,7 @@ exchange_helper="$(make_exchange_helper "$tmpdir" "$repo_root")"
 
 mv_shim_dir="$tmpdir/mv-shim-bin"
 install_mv_t_shim "$mv_shim_dir"
+install_find_printf_shim "$mv_shim_dir"
 export PATH="$mv_shim_dir:$PATH"
 original_path="$PATH"
 
@@ -58,7 +59,8 @@ for missing_command in grep cat touch; do
   missing_command_path="$tmpdir/no-$missing_command-bin"
   mkdir -p "$missing_command_path"
   install_flock_shim "$missing_command_path"
-  for required_command in readlink find sort comm cut ln rm mv mkdir mktemp grep cat touch; do
+  install_find_printf_shim "$missing_command_path"
+  for required_command in readlink sort comm cut ln rm mv mkdir mktemp grep cat touch; do
     [[ "$required_command" == "$missing_command" ]] && continue
     ln -sf "$(command -v "$required_command")" "$missing_command_path/$required_command"
   done
@@ -76,7 +78,8 @@ done
 
 missing_mv_t_path="$tmpdir/no-mv-t-bin"
 mkdir -p "$missing_mv_t_path"
-for required_command in readlink find sort comm cut ln rm mkdir mktemp grep cat touch; do
+install_find_printf_shim "$missing_mv_t_path"
+for required_command in readlink sort comm cut ln rm mkdir mktemp grep cat touch; do
   ln -s "$(command -v "$required_command")" "$missing_mv_t_path/$required_command"
 done
 install_flock_shim "$missing_mv_t_path"
@@ -102,6 +105,34 @@ if PATH="$missing_mv_t_path" /bin/bash "$remote_deploy" \
   fail "deploy should fail when mv -T is unavailable"
 fi
 grep -Fq "atomic replacement requires mv -T" "$missing_mv_t_err" || fail "missing mv -T failure should be explicit"
+
+non_gnu_find_path="$tmpdir/non-gnu-find-bin"
+mkdir -p "$non_gnu_find_path"
+install_flock_shim "$non_gnu_find_path"
+for required_command in readlink sort comm cut grep cat ln rm mv mkdir mktemp touch; do
+  ln -sf "$(command -v "$required_command")" "$non_gnu_find_path/$required_command"
+done
+cat >"$non_gnu_find_path/find" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [[ "$arg" == "-printf" ]]; then
+    echo "find: -printf: unknown primary or operator" >&2
+    exit 1
+  fi
+done
+/usr/bin/find "$@"
+SH
+chmod +x "$non_gnu_find_path/find"
+non_gnu_find_err="$tmpdir/non-gnu-find.err"
+if PATH="$non_gnu_find_path" /bin/bash "$remote_deploy" \
+  --docroot "$tmpdir/non-gnu-find-docroot" \
+  --deployment-id site-prod \
+  --release-id non-gnu-find-release \
+  --keep-releases 1 \
+  2>"$non_gnu_find_err"; then
+  fail "deploy should fail when find -printf is unavailable"
+fi
+grep -Fq "GNU find with -printf is required" "$non_gnu_find_err" || fail "missing GNU find failure should be explicit"
 
 PATH="$original_path"
 if ! command -v flock >/dev/null 2>&1; then
