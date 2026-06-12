@@ -345,6 +345,7 @@ assert_file_contains "$docroot/index.php/index.php" "retry"
 [[ ! -e "$base/exchanged_paths" ]] || fail "successful retry should clear exchanged paths"
 
 validator_body="$(awk '/^reconcile_new_claims\(\)/,/^}/' "$remote_deploy")"
+# shellcheck disable=SC2016
 if grep -Fq 'rm -rf -- "$public_path"' <<<"$validator_body"; then
   fail "reconcile_new_claims must not remove public_path before installing the symlink"
 fi

@@ -87,6 +87,7 @@ export PATH="$mv_shim_dir:$PATH"
 original_path="$PATH"
 
 switch_current_body="$(awk '/^switch_current\(\)/,/^}/' "$remote_deploy")"
+# shellcheck disable=SC2016
 if grep -Fq 'rm -f "$current"' <<<"$switch_current_body"; then
   fail "switch_current must not remove current before replacing it"
 fi
