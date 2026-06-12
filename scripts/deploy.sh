@@ -354,7 +354,20 @@ remote_ssh() {
   local label="$1"
   shift
 
-  run_authenticated "$label" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" "$@"
+  local attempt
+  local max_attempts=3
+  [[ "$label" == remote-deploy* ]] && max_attempts=1
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if run_authenticated "$label" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" "$@"; then
+      return 0
+    fi
+    [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]] && return 0
+    info "$label ssh attempt $attempt failed"
+    sleep "$attempt"
+  done
+
+  return 1
 }
 
 remote_rsync() {
