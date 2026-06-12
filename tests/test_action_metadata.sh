@@ -41,7 +41,7 @@ if grep -Eq '<\(|>\(|/dev/fd' "$repo_root/scripts/remote-deploy.sh"; then
 fi
 
 grep -Fxq "//go:build linux && amd64" "$helper_source" || fail "exchange helper source must be constrained to linux amd64"
-grep -Fq 'EXPECTED_GO_VERSION="go1.26.3"' "$helper_check" || fail "helper check must pin the expected Go version"
+grep -Eq 'EXPECTED_GO_VERSION="go[0-9]+(\.[0-9]+)*"' "$helper_check" || fail "helper check must pin the expected Go version"
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT

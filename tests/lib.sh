@@ -107,17 +107,35 @@ SH
 install_find_printf_shim() {
   local bin_dir="$1"
 
+  if [[ -x "$bin_dir/find" ]]; then
+    return 0
+  fi
+
   mkdir -p "$bin_dir"
+  if /usr/bin/find . -maxdepth 0 -printf '' >/dev/null 2>&1; then
+    ln -sf /usr/bin/find "$bin_dir/find"
+    return 0
+  fi
+
   cat >"$bin_dir/find" <<'SH'
 #!/bin/bash
 set -euo pipefail
+
+mtime_for_path() {
+  if stat -c %Y "$1" >/dev/null 2>&1; then
+    stat -c %Y "$1"
+  else
+    stat -f %m "$1"
+  fi
+}
+
 for arg in "$@"; do
   if [[ "$arg" == "-printf" ]]; then
     root="$1"
     shopt -s nullglob
     for child in "$root"/*; do
       [[ -d "$child" ]] || continue
-      printf '0\t%s\n' "$child"
+      printf '%s\t%s\n' "$(mtime_for_path "$child")" "$child"
     done
     exit 0
   fi

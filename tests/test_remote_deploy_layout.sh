@@ -84,7 +84,7 @@ for required_command in readlink sort comm cut ln rm mkdir mktemp grep cat touch
 done
 install_flock_shim "$missing_mv_t_path"
 cat >"$missing_mv_t_path/mv" <<'SH'
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 for arg in "$@"; do
   if [[ "$arg" == "-T" || "$arg" == "--no-target-directory" ]]; then
@@ -113,7 +113,7 @@ for required_command in readlink sort comm cut grep cat ln rm mv mkdir mktemp to
   ln -sf "$(command -v "$required_command")" "$non_gnu_find_path/$required_command"
 done
 cat >"$non_gnu_find_path/find" <<'SH'
-#!/usr/bin/env bash
+#!/bin/bash
 for arg in "$@"; do
   if [[ "$arg" == "-printf" ]]; then
     echo "find: -printf: unknown primary or operator" >&2
