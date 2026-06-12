@@ -29,6 +29,34 @@ trap 'rm -rf "$tmpdir"' EXIT
 stdout="$tmpdir/stdout"
 stderr="$tmpdir/stderr"
 
+if command -v ssh-keygen >/dev/null 2>&1 && command -v ssh-agent >/dev/null 2>&1 && command -v ssh-add >/dev/null 2>&1; then
+  agent_tmp="$tmpdir/agent"
+  mkdir -p "$agent_tmp"
+  agent_key="$agent_tmp/key"
+  askpass="$agent_tmp/askpass"
+  ssh_keygen_output="$agent_tmp/ssh-keygen.out"
+  ssh_add_stderr="$agent_tmp/ssh-add.stderr"
+  ssh-keygen -q -t ed25519 -N "test-passphrase" -C "github-ssh-deploy-test" -f "$agent_key" >"$ssh_keygen_output" 2>&1 || fail "ssh-keygen should create encrypted test key"
+  cat >"$askpass" <<'SH'
+#!/bin/sh
+printf '%s\n' "${TEST_KEY_PASSPHRASE:?}"
+SH
+  chmod 700 "$askpass"
+  agent_output="$(ssh-agent -s)"
+  eval "$agent_output" >/dev/null
+  agent_pid="$SSH_AGENT_PID"
+  if ! DISPLAY=none SSH_ASKPASS="$askpass" SSH_ASKPASS_REQUIRE=force TEST_KEY_PASSPHRASE="test-passphrase" ssh-add "$agent_key" </dev/null >/dev/null 2>"$ssh_add_stderr"; then
+    cat "$ssh_add_stderr" >&2
+    SSH_AGENT_PID="$agent_pid" ssh-agent -k >/dev/null 2>&1 || true
+    fail "ssh-add should load encrypted key through SSH_ASKPASS"
+  fi
+  ssh-add -l | grep -Fq "github-ssh-deploy-test" || fail "ssh-agent should contain encrypted test key"
+  SSH_AGENT_PID="$agent_pid" ssh-agent -k >/dev/null 2>&1 || true
+  unset SSH_AUTH_SOCK SSH_AGENT_PID
+else
+  echo "ssh-keygen, ssh-agent, or ssh-add not found; skipping encrypted key askpass mechanism test" >&2
+fi
+
 if INPUT_HOST="" run_deploy "$stdout" "$stderr"; then
   fail "missing host should fail"
 fi

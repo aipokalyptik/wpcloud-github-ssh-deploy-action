@@ -87,6 +87,8 @@ mask_secret() {
 
   [[ -n "$value" ]] || return 0
 
+  # Dry-run output is test-fixture data. Preserve the legacy password mask
+  # assertion, but never emit private key material to the mask channel there.
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
     if [[ "$dry_run_redaction" == "__RAW__" ]]; then
       echo "::add-mask::$value"
@@ -224,20 +226,12 @@ EXCLUDES
 
 remote_arch() {
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
-    local cmd=(ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m)
-    if [[ "$auth_mode" == "password" ]]; then
-      cmd=(env "SSHPASS=REDACTED" sshpass -e "${cmd[@]}")
-    fi
-    info "dry-run: remote-arch: $(shell_join "${cmd[@]}")"
+    run_authenticated "remote-arch" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
     printf '%s\n' "x86_64"
     return 0
   fi
 
-  if [[ "$auth_mode" == "password" ]]; then
-    env "SSHPASS=$password" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
-  else
-    ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
-  fi
+  run_authenticated "remote-arch" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
 }
 
 exchange_helper_for_arch() {
@@ -272,9 +266,9 @@ run_or_print() {
     local redacted_args=()
     local arg
     for arg in "$@"; do
-      if [[ "$arg" == "$password" ]]; then
+      if [[ -n "$password" && "$arg" == "$password" ]]; then
         redacted_args+=("REDACTED")
-      elif [[ "$arg" == "SSHPASS=$password" ]]; then
+      elif [[ -n "$password" && "$arg" == "SSHPASS=$password" ]]; then
         redacted_args+=("SSHPASS=REDACTED")
       elif [[ -n "$private_key_passphrase" && "$arg" == "GITHUB_SSH_DEPLOY_KEY_PASSPHRASE=$private_key_passphrase" ]]; then
         redacted_args+=("GITHUB_SSH_DEPLOY_KEY_PASSPHRASE=REDACTED")
@@ -291,16 +285,22 @@ run_or_print() {
   "$@"
 }
 
+run_authenticated() {
+  local label="$1"
+  shift
+
+  if [[ "$auth_mode" == "password" ]]; then
+    run_or_print "$label" env "SSHPASS=$password" sshpass -e "$@"
+  else
+    run_or_print "$label" "$@"
+  fi
+}
+
 remote_ssh() {
   local label="$1"
   shift
 
-  local cmd=(ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" "$@")
-  if [[ "$auth_mode" == "password" ]]; then
-    cmd=(env "SSHPASS=$password" sshpass -e "${cmd[@]}")
-  fi
-
-  run_or_print "$label" "${cmd[@]}"
+  run_authenticated "$label" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" "$@"
 }
 
 remote_rsync() {
@@ -310,12 +310,7 @@ remote_rsync() {
   shift 3
   local rsync_options=("$@")
 
-  local cmd=(rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg")
-  if [[ "$auth_mode" == "password" ]]; then
-    cmd=(env "SSHPASS=$password" sshpass -e "${cmd[@]}")
-  fi
-
-  run_or_print "$label" "${cmd[@]}"
+  run_authenticated "$label" rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
 }
 
 main() {

@@ -63,7 +63,9 @@ Customer workflows should pin the action with Git tags such as `@v1`.
 Required secrets are normally `host`, `username`, and one authentication method:
 either `password` or `private-key`. You can store them with any secret names you
 prefer and map them into the action inputs. If the private key is encrypted,
-also provide `private-key-passphrase`.
+also provide `private-key-passphrase`. Encrypted keys must be OpenSSH-format
+private keys; use `ssh-keygen -p -f <key>` to convert older PEM keys before
+storing them as GitHub secrets.
 
 ## Optional Examples
 
@@ -262,7 +264,8 @@ pruned by `keep-releases` or would violate current protected anchors.
 `ssh-agent` or `ssh-add` is required for encrypted private-key authentication
 : Encrypted private keys are loaded into `ssh-agent` with an `SSH_ASKPASS`
   helper on the runner. Use a GitHub-hosted runner or install the missing
-  runner-side OpenSSH tool.
+  runner-side OpenSSH tool. Encrypted private keys must be OpenSSH-format keys;
+  convert older PEM keys with `ssh-keygen -p -f <key>`.
 
 `ssh-keyscan did not return a host key`
 : Provide `known-hosts` explicitly, verify the SSH host and port, or confirm the
