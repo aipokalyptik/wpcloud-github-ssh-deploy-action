@@ -59,6 +59,9 @@ mv -T -- "$new" "$old"
 mv -T -- "$tmp" "$new"
 SH
 chmod +x "$exchange_helper"
+if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
+  exchange_helper="$repo_root/helpers/bin/linux-amd64/exchange-rename"
+fi
 
 mv_shim_dir="$tmpdir/mv-shim-bin"
 mkdir -p "$mv_shim_dir"

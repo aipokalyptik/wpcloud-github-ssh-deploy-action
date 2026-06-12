@@ -53,6 +53,10 @@ mv -T -- "$new" "$old"
 mv -T -- "$tmp" "$new"
 SH
 chmod +x "$exchange_helper"
+if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
+  exchange_helper="$repo_root/helpers/bin/linux-amd64/exchange-rename"
+fi
+default_exchange_helper="$exchange_helper"
 
 flock_shim_dir="$tmpdir/bin"
 mkdir -p "$flock_shim_dir"
@@ -332,7 +336,7 @@ assert_file_contains "$docroot/index.php/index.php" "wanted"
 [[ -s "$base/exchanged_paths" ]] || fail "failed cleanup should retain exchanged paths for retry"
 
 rm -f "$cleanup_fail_marker"
-exchange_helper="$tmpdir/exchange-helper"
+exchange_helper="$default_exchange_helper"
 mkdir -p "$base/incoming/retry/index.php"
 printf 'retry\n' >"$base/incoming/retry/index.php/index.php"
 run_remote_deploy site-prod retry >/dev/null

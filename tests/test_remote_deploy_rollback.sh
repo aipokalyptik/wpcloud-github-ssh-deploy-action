@@ -59,6 +59,9 @@ mv -T -- "$new" "$old"
 mv -T -- "$tmp" "$new"
 SH
 chmod +x "$exchange_helper"
+if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
+  exchange_helper="$repo_root/helpers/bin/linux-amd64/exchange-rename"
+fi
 
 flock_shim_dir="$tmpdir/bin"
 mkdir -p "$flock_shim_dir"
