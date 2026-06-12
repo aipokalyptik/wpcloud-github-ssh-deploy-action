@@ -11,6 +11,7 @@ DEPLOY_TMPDIR=""
 REMOTE_LOGIN=""
 SSH_COMMAND=""
 RSYNC_SSH_COMMAND=""
+PASSWORD_ASKPASS_FILE=""
 SSH_OPTIONS=()
 SSH_AGENT_PID_TO_CLEAN=""
 
@@ -292,6 +293,8 @@ run_or_print() {
         redacted_args+=("REDACTED")
       elif [[ -n "$password" && "$arg" == "SSHPASS=$password" ]]; then
         redacted_args+=("SSHPASS=REDACTED")
+      elif [[ -n "$password" && "$arg" == "GITHUB_SSH_DEPLOY_PASSWORD=$password" ]]; then
+        redacted_args+=("GITHUB_SSH_DEPLOY_PASSWORD=REDACTED")
       # The passphrase should never cross argv today. Keep this as a tripwire
       # for future command-shape changes in dry-run logging.
       elif [[ -n "$private_key_passphrase" && "$arg" == "GITHUB_SSH_DEPLOY_KEY_PASSPHRASE=$private_key_passphrase" ]]; then
@@ -338,7 +341,12 @@ remote_rsync() {
   local rsync_options=("$@")
 
   if [[ "$auth_mode" == "password" ]]; then
-    run_or_print "$label" env "SSHPASS=$password" rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
+    run_or_print "$label" env \
+      "GITHUB_SSH_DEPLOY_PASSWORD=$password" \
+      "DISPLAY=none" \
+      "SSH_ASKPASS=$PASSWORD_ASKPASS_FILE" \
+      "SSH_ASKPASS_REQUIRE=force" \
+      rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
   else
     run_or_print "$label" rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
   fi
@@ -443,6 +451,14 @@ main() {
   local exclude_file="$tmpdir/rsync-excludes"
   local use_exclude_file
   use_exclude_file="$(write_excludes "$exclude_input" "$exclude_file")"
+  if [[ "$auth_mode" == "password" ]]; then
+    PASSWORD_ASKPASS_FILE="$tmpdir/password-askpass"
+    cat >"$PASSWORD_ASKPASS_FILE" <<'SH'
+#!/bin/sh
+printf '%s\n' "${GITHUB_SSH_DEPLOY_PASSWORD:?}"
+SH
+    chmod 700 "$PASSWORD_ASKPASS_FILE"
+  fi
   local private_key_file=""
   if [[ "$auth_mode" == "private-key" ]]; then
     private_key_file="$tmpdir/private-key"
@@ -489,13 +505,9 @@ main() {
   fi
   REMOTE_LOGIN="$username@$host"
   SSH_COMMAND="$(shell_join ssh "${SSH_OPTIONS[@]}")"
-  if [[ "$auth_mode" == "password" ]]; then
-    # sshpass must wrap the SSH process that rsync launches via -e. Wrapping
-    # rsync itself can leave the nested ssh prompt unanswered on some hosts.
-    RSYNC_SSH_COMMAND="$(shell_join sshpass -e ssh "${SSH_OPTIONS[@]}")"
-  else
-    RSYNC_SSH_COMMAND="$SSH_COMMAND"
-  fi
+  # rsync launches SSH as a child process, so password-mode uploads use
+  # OpenSSH's askpass path. Direct SSH probes still use sshpass above.
+  RSYNC_SSH_COMMAND="$SSH_COMMAND"
 
   info "auth_mode=$auth_mode"
   info "port=$port"
