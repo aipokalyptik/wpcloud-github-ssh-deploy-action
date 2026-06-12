@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	// amd64 syscall number, kept safe by the linux && amd64 build tag above.
 	SYS_RENAMEAT2   = 316
 	RENAME_EXCHANGE = 0x2
 	// AT_FDCWD is -100. Syscall arguments are uintptr, so encode it as

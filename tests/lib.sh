@@ -112,6 +112,8 @@ install_find_printf_shim() {
   fi
 
   mkdir -p "$bin_dir"
+  # Linux/GNU hosts should exercise the real find path. Only non-GNU local
+  # machines get the small -printf emulation used by pruning tests.
   if /usr/bin/find . -maxdepth 0 -printf '' >/dev/null 2>&1; then
     ln -sf /usr/bin/find "$bin_dir/find"
     return 0

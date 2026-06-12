@@ -65,9 +65,9 @@ shell_join() {
 ensure_sshpass() {
   command -v sshpass >/dev/null 2>&1 && return 0
 
-  # Password auth is the only mode that needs sshpass. On GitHub-hosted Linux
-  # runners we can install it for convenience; elsewhere we fail early so users
-  # do not discover the missing dependency halfway through a deploy.
+  # Password auth is the only mode that needs sshpass. On GitHub Actions Linux
+  # runners with apt-get we can install it for convenience; elsewhere we fail
+  # early so users do not discover the missing dependency halfway through a deploy.
   if [[ "${GITHUB_ACTIONS:-}" == "true" ]] && [[ "${RUNNER_OS:-}" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
     info "sshpass not found; installing with apt-get"
     local sudo_cmd=()
@@ -101,10 +101,10 @@ mask_secret() {
     return 0
   fi
 
-  # GitHub masks exact strings, not multiline blobs. Emit each non-empty line of
-  # private key material separately so accidental later output is still covered.
   [[ "${GITHUB_ACTIONS:-}" == "true" ]] || return 0
 
+  # GitHub masks exact strings, not multiline blobs. Emit each non-empty line of
+  # private key material separately so accidental later output is still covered.
   local line
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -n "$line" ]] || continue
@@ -190,7 +190,8 @@ write_known_hosts() {
   fi
 
   # We never disable host key checking. If callers do not pin known_hosts, use
-  # ssh-keyscan to create a strict per-run known_hosts file.
+  # ssh-keyscan for a per-run known_hosts file. This is trust-on-first-use;
+  # pinned known-hosts input is the stronger option.
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
     : >"$output_file"
     info "known_hosts_source=ssh-keyscan"
@@ -242,6 +243,8 @@ EXCLUDES
 
 remote_arch() {
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
+    # Dry-run cannot query the remote, but later upload planning needs an arch
+    # value to render the exchange-helper commands.
     run_authenticated "remote-arch" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
     printf '%s\n' "x86_64"
     return 0

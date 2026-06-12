@@ -63,7 +63,8 @@ require_remote_capabilities() {
   done
 
   # Later pruning depends on GNU find's timestamp output, and sticky/protected
-  # discovery uses GNU-style predicates. Probe behavior, not just command names.
+  # discovery uses GNU-style predicates. Probing -printf is the cheap proxy for
+  # GNU find as a whole.
   probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/github-ssh-deploy-preflight.XXXXXX")" || die "mktemp is required"
   if ! find "$probe_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' >/dev/null 2>&1; then
     rm -rf -- "$probe_dir"
@@ -118,6 +119,8 @@ switch_current() {
 acquire_lock() {
   local lock_file="$1"
 
+  # fd 9 is just a private lock handle. There is no explicit unlock: the kernel
+  # releases the flock when this process exits and closes the descriptor.
   exec 9>"$lock_file"
   flock -x 9
 }
@@ -164,6 +167,8 @@ public_symlink_target() {
   local parent="$claim"
   local prefix=""
 
+  # Build a relative target from the claim's parent directory. Example:
+  # wp-content/plugins/foo -> ../../.github-ssh-deploy/.../current/wp-content/plugins/foo
   if [[ "$parent" == */* ]]; then
     parent="${parent%/*}"
     while [[ -n "$parent" ]]; do
@@ -618,6 +623,9 @@ compute_claims() {
 
     case "$public_path" in
       .git|.git/*|.github-ssh-deploy|.github-ssh-deploy/*)
+        # Never claim the deployment namespace itself. If caller-controlled
+        # excludes allow .github-ssh-deploy into a release, claiming it would
+        # swap releases, lock, and helper for a symlink into that same release.
         continue
         ;;
     esac
@@ -838,8 +846,6 @@ main() {
   acquire_lock "$lock_file"
 
   [[ -d "$incoming_release" ]] || die "incoming release does not exist: $incoming_release"
-  # Finish any deferred atomic-exchange cleanup before planning new claims, so
-  # stale exchanged-away paths cannot influence this run's conflict checks.
   cleanup_exchanged_paths "$exchanged_paths_file"
   rm -f -- "$exchanged_paths_file"
   sweep_stale_scratch_dirs "$base"
