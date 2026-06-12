@@ -262,7 +262,21 @@ remote_arch() {
     return 0
   fi
 
-  run_authenticated "remote-arch" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
+  local attempt
+  local output
+  for attempt in 1 2 3; do
+    if output="$(run_authenticated "remote-arch" ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m)"; then
+      output="$(trim "$output")"
+      if [[ -n "$output" ]]; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+    fi
+    info "remote_arch attempt $attempt failed"
+    sleep "$attempt"
+  done
+
+  die "remote_arch probe failed"
 }
 
 exchange_helper_for_arch() {
