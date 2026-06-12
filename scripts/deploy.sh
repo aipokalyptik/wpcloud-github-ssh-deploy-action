@@ -64,6 +64,16 @@ shell_join() {
   printf '%s' "${out# }"
 }
 
+rsync_remote_shell_join() {
+  local out=""
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" != *[[:space:]]* ]] || die "internal rsync ssh argument contains whitespace: $arg"
+    out+=" $arg"
+  done
+  printf '%s' "${out# }"
+}
+
 ensure_sshpass() {
   command -v sshpass >/dev/null 2>&1 && return 0
 
@@ -507,7 +517,7 @@ SH
   SSH_COMMAND="$(shell_join ssh "${SSH_OPTIONS[@]}")"
   # rsync launches SSH as a child process, so password-mode uploads use
   # OpenSSH's askpass path. Direct SSH probes still use sshpass above.
-  RSYNC_SSH_COMMAND="$SSH_COMMAND"
+  RSYNC_SSH_COMMAND="$(rsync_remote_shell_join ssh "${SSH_OPTIONS[@]}")"
 
   info "auth_mode=$auth_mode"
   info "port=$port"

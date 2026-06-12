@@ -136,6 +136,7 @@ assert_contains "GITHUB_SSH_DEPLOY_PASSWORD=REDACTED" "$stderr"
 assert_not_contains "-e sshpass\\ -e\\ ssh" "$stderr"
 assert_contains "-o PubkeyAuthentication=no" "$stderr"
 assert_contains "-o PreferredAuthentications=password\\,keyboard-interactive" "$stderr"
+assert_not_contains "PreferredAuthentications=password\\\\\\\\\\\\,keyboard-interactive" "$stderr"
 assert_not_contains "secret-password" "$stderr"
 
 private_key=$'-----BEGIN OPENSSH PRIVATE KEY-----\nfake-private-key-body\n-----END OPENSSH PRIVATE KEY-----'
