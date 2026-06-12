@@ -62,6 +62,8 @@ require_remote_capabilities() {
     command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
   done
 
+  # Later pruning depends on GNU find's timestamp output, and sticky/protected
+  # discovery uses GNU-style predicates. Probe behavior, not just command names.
   probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/github-ssh-deploy-preflight.XXXXXX")" || die "mktemp is required"
   if ! find "$probe_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' >/dev/null 2>&1; then
     rm -rf -- "$probe_dir"
@@ -103,6 +105,8 @@ switch_current() {
   rm -f "$tmp_current"
   ln -s "releases/$release_id" "$tmp_current"
 
+  # Every public symlink points through current. Replacing current must therefore
+  # be a single rename, never remove-then-create.
   if mv -T "$tmp_current" "$current" 2>/dev/null; then
     return 0
   fi
@@ -127,6 +131,8 @@ prune_releases() {
   local release_path
   local release_name
 
+  # Keep the active release plus the newest non-active releases. This preserves
+  # rollback choices while avoiding deletion of the release currently serving.
   { find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' 2>/dev/null || true; } |
   sort -rn |
   while IFS=$'\t' read -r _ release_path; do
@@ -206,6 +212,9 @@ reconcile_new_claims() {
     fi
 
     [[ -x "$exchange_helper" ]] || die "exchange helper is required to reclaim existing path: $claim"
+    # Existing public paths may contain real files/directories. Swap in the
+    # deploy symlink atomically, then defer deletion of the exchanged-away path
+    # until current points at the new release.
     if ! "$exchange_helper" "$tmp_link" "$public_path"; then
       rm -f -- "$tmp_link"
       die "exchange helper failed to reclaim path: $claim"
@@ -218,6 +227,8 @@ cleanup_exchanged_paths() {
   local exchanged_paths_file="$1"
   local path
 
+  # This file is durable on purpose. If cleanup failed after a prior atomic
+  # exchange, the next deploy or rollback retries before changing claims again.
   [[ -f "$exchanged_paths_file" ]] || return 0
   while IFS= read -r path || [[ -n "$path" ]]; do
     [[ -n "$path" ]] || continue
@@ -275,6 +286,8 @@ reject_foreign_deployment_ancestor_claim() {
   local target
   local owner
 
+  # Layered deployments are allowed only when their public paths do not overlap.
+  # A foreign ancestor symlink would route this claim into another deployment.
   while [[ "$remainder" == */* ]]; do
     component="${remainder%%/*}"
     remainder="${remainder#*/}"
@@ -299,6 +312,8 @@ reject_foreign_deployment_descendant_claim() {
 
   [[ -d "$public_path" && ! -L "$public_path" ]] || return 0
 
+  # Reclaiming a real directory is destructive to that exact path. Refuse when
+  # it contains another deployment's symlink so layers cannot engulf each other.
   { find "$public_path" -mindepth 1 -type l -print0 2>/dev/null || true; } |
   while IFS= read -r -d '' link_path; do
     target="$(readlink "$link_path")"
@@ -496,6 +511,9 @@ validate_claims_not_protected() {
   protected_keys_file="$tmp_prefix.protected-keys"
   blocked_anchors_file="$tmp_prefix.blocked-anchors"
 
+  # A claim is unsafe if it equals, descends from, or contains a protected
+  # anchor. Expand both sides to ancestor sets so the overlap check stays in
+  # standard sorted-file operations instead of nested path-walking logic.
   expand_ancestor_pairs "$claims_file" >"$ancestor_pairs_file"
 
   cut -f1 "$ancestor_pairs_file" | sort -u >"$ancestor_keys_file"
@@ -550,6 +568,9 @@ claim_for_path() {
   local remainder
   local next_segment
 
+  # Sticky boundaries mark dynamic areas such as wp-content/plugins. Inside the
+  # deepest boundary, deploy only the next child as the public claim so one
+  # plugin/theme does not claim the whole writable parent directory.
   while IFS= read -r boundary || [[ -n "$boundary" ]]; do
     if [[ -z "$boundary" ]]; then
       continue
@@ -634,6 +655,9 @@ prepare_claim_transition() {
     : >"$old_release_claims_file"
   fi
 
+  # The previous release tree is not the whole truth: public symlinks may have
+  # survived manual repair or a failed cleanup. Include materialized symlinks so
+  # removal/reclaim decisions reflect the actual docroot state.
   discover_materialized_public_claims "$docroot" "$deployment_id" "$materialized_claims_file"
   combine_claims "$old_claims_file" "$old_release_claims_file" "$materialized_claims_file"
   compute_claims "$target_release_dir" "$boundaries_file" "$new_claims_file"
@@ -814,6 +838,8 @@ main() {
   acquire_lock "$lock_file"
 
   [[ -d "$incoming_release" ]] || die "incoming release does not exist: $incoming_release"
+  # Finish any deferred atomic-exchange cleanup before planning new claims, so
+  # stale exchanged-away paths cannot influence this run's conflict checks.
   cleanup_exchanged_paths "$exchanged_paths_file"
   rm -f -- "$exchanged_paths_file"
   sweep_stale_scratch_dirs "$base"

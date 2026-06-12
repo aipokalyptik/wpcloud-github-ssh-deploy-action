@@ -29,6 +29,8 @@ trap 'rm -rf "$tmpdir"' EXIT
 stdout="$tmpdir/stdout"
 stderr="$tmpdir/stderr"
 
+# Dry-run skips ssh-agent setup, so this local mechanism test covers the
+# non-interactive encrypted-key path without needing a remote SSH server.
 if command -v ssh-keygen >/dev/null 2>&1 && command -v ssh-agent >/dev/null 2>&1 && command -v ssh-add >/dev/null 2>&1; then
   agent_tmp="$tmpdir/agent"
   mkdir -p "$agent_tmp"

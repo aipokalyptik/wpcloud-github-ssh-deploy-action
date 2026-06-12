@@ -65,6 +65,9 @@ shell_join() {
 ensure_sshpass() {
   command -v sshpass >/dev/null 2>&1 && return 0
 
+  # Password auth is the only mode that needs sshpass. On GitHub-hosted Linux
+  # runners we can install it for convenience; elsewhere we fail early so users
+  # do not discover the missing dependency halfway through a deploy.
   if [[ "${GITHUB_ACTIONS:-}" == "true" ]] && [[ "${RUNNER_OS:-}" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
     info "sshpass not found; installing with apt-get"
     local sudo_cmd=()
@@ -98,6 +101,8 @@ mask_secret() {
     return 0
   fi
 
+  # GitHub masks exact strings, not multiline blobs. Emit each non-empty line of
+  # private key material separately so accidental later output is still covered.
   [[ "${GITHUB_ACTIONS:-}" == "true" ]] || return 0
 
   local line
@@ -108,6 +113,8 @@ mask_secret() {
 }
 
 validate_auth_inputs() {
+  # Auth is intentionally exclusive. Silently preferring one credential over
+  # another makes stale secrets and misconfigured workflows hard to diagnose.
   if [[ -n "$(trim "$password")" && -n "$(trim "$private_key")" ]]; then
     die "password and private-key are mutually exclusive"
   fi
@@ -128,6 +135,8 @@ validate_auth_inputs() {
 write_private_key() {
   local output_file="$1"
 
+  # Dry-run often keeps temp directories for assertions. Write a placeholder so
+  # command-shape tests can inspect permissions without persisting a real key.
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
     printf '%s\n' "PRIVATE_KEY_REDACTED" >"$output_file"
   else
@@ -143,6 +152,9 @@ start_key_agent() {
   command -v ssh-agent >/dev/null 2>&1 || die "ssh-agent is required for encrypted private-key authentication"
   command -v ssh-add >/dev/null 2>&1 || die "ssh-add is required for encrypted private-key authentication"
 
+  # ssh itself must run with BatchMode=yes so deploys never hang on a prompt.
+  # Encrypted keys are therefore unlocked once up front through ssh-agent, using
+  # SSH_ASKPASS to feed the passphrase non-interactively to ssh-add.
   cat >"$askpass_file" <<'SH'
 #!/bin/sh
 printf '%s\n' "${GITHUB_SSH_DEPLOY_KEY_PASSPHRASE:?}"
@@ -177,6 +189,8 @@ write_known_hosts() {
     return 0
   fi
 
+  # We never disable host key checking. If callers do not pin known_hosts, use
+  # ssh-keyscan to create a strict per-run known_hosts file.
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
     : >"$output_file"
     info "known_hosts_source=ssh-keyscan"
@@ -195,6 +209,8 @@ write_excludes() {
   local trimmed_input
   trimmed_input="$(trim "$exclude_input")"
 
+  # Empty input means "use safe defaults"; the literal value "none" is the
+  # explicit escape hatch for repositories that really want every path uploaded.
   if [[ -z "$trimmed_input" ]]; then
     cat >"$output_file" <<'EXCLUDES'
 .git/
@@ -249,6 +265,8 @@ exchange_helper_for_arch() {
 }
 
 cleanup() {
+  # Only kill the agent we started. A runner may already have an agent, and the
+  # action should not disturb credentials outside this deploy.
   if [[ -n "${SSH_AGENT_PID_TO_CLEAN:-}" ]]; then
     SSH_AGENT_PID="$SSH_AGENT_PID_TO_CLEAN" ssh-agent -k >/dev/null 2>&1 || true
   fi
@@ -291,6 +309,8 @@ run_authenticated() {
   local label="$1"
   shift
 
+  # Keep the password-mode sshpass wrapper in one place so ssh, rsync, and
+  # remote architecture probing cannot drift in how they authenticate.
   if [[ "$auth_mode" == "password" ]]; then
     run_or_print "$label" env "SSHPASS=$password" sshpass -e "$@"
   else
@@ -445,6 +465,8 @@ main() {
 
   SSH_OPTIONS=(-o "UserKnownHostsFile=$known_hosts_file" -o "StrictHostKeyChecking=yes" -p "$port")
   if [[ "$auth_mode" == "password" ]]; then
+    # Password mode must not accidentally use a runner agent or default key
+    # before sshpass has a chance to answer the password prompt.
     SSH_OPTIONS=(
       -o "BatchMode=no"
       -o "PubkeyAuthentication=no"
@@ -452,6 +474,8 @@ main() {
       "${SSH_OPTIONS[@]}"
     )
   else
+    # Key mode stays non-interactive. For encrypted keys, ssh matches this key
+    # file to the identity already loaded into the temporary agent.
     SSH_OPTIONS=(-o "BatchMode=yes" -o "IdentitiesOnly=yes" -i "$private_key_file" "${SSH_OPTIONS[@]}")
   fi
   REMOTE_LOGIN="$username@$host"
