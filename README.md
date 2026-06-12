@@ -140,8 +140,8 @@ anchors at deploy time:
   path segment, so a plugin deployment can claim `wp-content/plugins/my-plugin`
   instead of all of `wp-content`.
 - Protected anchors are root-owned or root-group-owned paths that are not
-  writable. If a release would claim a protected path or a descendant of one,
-  deployment stops before promotion.
+  writable. If a release claim overlaps a protected anchor by equality,
+  descendant, or ancestor containment, deployment stops before promotion.
 
 This is intended to avoid replacing host-owned WordPress anchors while still
 allowing deploys into writable application areas.

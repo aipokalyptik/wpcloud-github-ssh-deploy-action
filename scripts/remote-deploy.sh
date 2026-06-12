@@ -419,6 +419,9 @@ validate_claims_not_protected() {
   local tmp_prefix
   local ancestor_pairs_file
   local ancestor_keys_file
+  local claim_keys_file
+  local protected_ancestor_pairs_file
+  local protected_ancestor_keys_file
   local protected_keys_file
   local blocked_anchors_file
   local blocked_claim
@@ -426,9 +429,12 @@ validate_claims_not_protected() {
   tmp_prefix="${claims_file}.protected.$$"
   ancestor_pairs_file="$tmp_prefix.ancestor-pairs"
   ancestor_keys_file="$tmp_prefix.ancestor-keys"
+  claim_keys_file="$tmp_prefix.claim-keys"
+  protected_ancestor_pairs_file="$tmp_prefix.protected-ancestor-pairs"
+  protected_ancestor_keys_file="$tmp_prefix.protected-ancestor-keys"
   protected_keys_file="$tmp_prefix.protected-keys"
   blocked_anchors_file="$tmp_prefix.blocked-anchors"
-  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
+  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$claim_keys_file" "$protected_ancestor_pairs_file" "$protected_ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
 
   while IFS= read -r claim || [[ -n "$claim" ]]; do
     ancestor="$claim"
@@ -445,8 +451,27 @@ validate_claims_not_protected() {
   done <"$claims_file" >"$ancestor_pairs_file"
 
   cut -f1 "$ancestor_pairs_file" | sort -u >"$ancestor_keys_file"
+  sort -u "$claims_file" >"$claim_keys_file"
   sort -u "$protected_anchors_file" >"$protected_keys_file"
   comm -12 "$protected_keys_file" "$ancestor_keys_file" >"$blocked_anchors_file"
+
+  while IFS= read -r claim || [[ -n "$claim" ]]; do
+    ancestor="$claim"
+    while true; do
+      printf '%s\t%s\n' "$ancestor" "$claim"
+      [[ -z "$ancestor" ]] && break
+
+      if [[ "$ancestor" == */* ]]; then
+        ancestor="${ancestor%/*}"
+      else
+        ancestor=""
+      fi
+    done
+  done <"$protected_keys_file" >"$protected_ancestor_pairs_file"
+
+  cut -f1 "$protected_ancestor_pairs_file" | sort -u >"$protected_ancestor_keys_file"
+  comm -12 "$claim_keys_file" "$protected_ancestor_keys_file" >>"$blocked_anchors_file"
+  sort -u "$blocked_anchors_file" -o "$blocked_anchors_file"
 
   if [[ -s "$blocked_anchors_file" ]]; then
     blocked_claim="$(
@@ -457,11 +482,11 @@ validate_claims_not_protected() {
         fi
       done <"$ancestor_pairs_file"
     )"
-    rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
+    rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$claim_keys_file" "$protected_ancestor_pairs_file" "$protected_ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
     die "protected path: $blocked_claim"
   fi
 
-  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
+  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$claim_keys_file" "$protected_ancestor_pairs_file" "$protected_ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
 }
 
 claim_for_path() {

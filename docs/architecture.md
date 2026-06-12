@@ -81,8 +81,9 @@ find <docroot> \( -uid 0 -or -gid 0 \) -and -not -writable
 ```
 
 Before promotion or rollback, every new claim is checked against the protected
-anchor set. If a claim is the protected path or descends from it, the helper
-fails with `protected path: <claim>` before switching `current`.
+anchor set. If a claim overlaps a protected anchor by equality, descendant, or
+ancestor containment, the helper fails with `protected path: <claim>` before
+switching `current`.
 
 Tests can override protected anchors with
 `GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE`; that is also an internal test hook.

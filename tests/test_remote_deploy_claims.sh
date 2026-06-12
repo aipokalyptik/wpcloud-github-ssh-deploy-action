@@ -213,6 +213,23 @@ mkdir -p "$base/incoming/protected-plugin/wp-content/plugins/akismet"
 printf 'blocked\n' >"$base/incoming/protected-plugin/wp-content/plugins/akismet/akismet.php"
 assert_protected_failure protected-plugin "wp-content/plugins/akismet"
 
+write_boundaries "$boundaries" "."
+write_protected_anchors "$protected_anchors" "wp-content/advanced-cache.php"
+mkdir -p "$base/incoming/protected-engulfed-file/wp-content"
+printf 'blocked\n' >"$base/incoming/protected-engulfed-file/wp-content/plugin.php"
+assert_protected_failure protected-engulfed-file "wp-content"
+
+write_boundaries "$boundaries" "."
+write_protected_anchors "$protected_anchors" "assets/managed/config.php"
+mkdir -p "$base/incoming/protected-engulfed-directory/assets/js"
+printf 'blocked\n' >"$base/incoming/protected-engulfed-directory/assets/js/app.js"
+assert_protected_failure protected-engulfed-directory "assets"
+
+write_boundaries "$boundaries" \
+  "." \
+  "./wp-content" \
+  "./wp-content/plugins"
+
 mkdir -p "$base/incoming/writable-sibling/wp-content/plugins/hello"
 printf 'allowed\n' >"$base/incoming/writable-sibling/wp-content/plugins/hello/hello.php"
 GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
