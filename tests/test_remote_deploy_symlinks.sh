@@ -34,16 +34,48 @@ run_remote_deploy() {
       --docroot "$docroot" \
       --deployment-id "$deployment_id" \
       --release-id "$release_id" \
+      --exchange-helper "$exchange_helper" \
       --keep-releases 3
 }
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+exchange_helper="$tmpdir/exchange-helper"
+cat >"$exchange_helper" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+old="$1"
+new="$2"
+tmp="${old}.swap.$$"
+mv -T -- "$old" "$tmp"
+mv -T -- "$new" "$old"
+mv -T -- "$tmp" "$new"
+SH
+chmod +x "$exchange_helper"
+
 flock_shim_dir="$tmpdir/bin"
 mkdir -p "$flock_shim_dir"
 printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n' >"$flock_shim_dir/flock"
+cat >"$flock_shim_dir/mv" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+args=()
+no_target=0
+for arg in "$@"; do
+  case "$arg" in
+    -T|--no-target-directory) no_target=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+if ((no_target)) && ((${#args[@]} >= 2)); then
+  dest="${args[$((${#args[@]} - 1))]}"
+  rm -rf -- "$dest"
+fi
+/bin/mv "${args[@]}"
+SH
 chmod +x "$flock_shim_dir/flock"
+chmod +x "$flock_shim_dir/mv"
 export PATH="$flock_shim_dir:$PATH"
 
 docroot="$tmpdir/docroot"
@@ -245,3 +277,89 @@ fi
 grep -F "claim contains another deployment: wp-content/plugins" "$foreign_descendant_stderr" >/dev/null || fail "missing foreign descendant owner error"
 assert_symlink_target "$base/current" "releases/prior"
 assert_symlink_target "$docroot/wp-content/plugins/foo" "../../.github-ssh-deploy/deployments/other-prod/current/wp-content/plugins/foo"
+
+docroot="$tmpdir/exchange-cleanup-failure-docroot"
+boundaries="$tmpdir/exchange-cleanup-failure-boundaries"
+base="$docroot/.github-ssh-deploy/deployments/site-prod"
+mkdir -p "$base/incoming/prior/index.php" "$base/incoming/reclaim/index.php"
+printf 'prior\n' >"$base/incoming/prior/index.php/index.php"
+printf 'wanted\n' >"$base/incoming/reclaim/index.php/index.php"
+printf '.\n' >"$boundaries"
+run_remote_deploy site-prod prior >/dev/null
+rm -f "$docroot/index.php"
+printf 'manual\n' >"$docroot/index.php"
+
+cleanup_fail_marker="$tmpdir/exchange-cleanup-fail-enabled"
+exchange_helper="$tmpdir/exchange-helper-with-cleanup-fail"
+cat >"$exchange_helper" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+old="\$1"
+new="\$2"
+tmp="\${old}.swap.\$\$"
+mv -T -- "\$old" "\$tmp"
+mv -T -- "\$new" "\$old"
+mv -T -- "\$tmp" "\$new"
+touch "$cleanup_fail_marker"
+SH
+chmod +x "$exchange_helper"
+rm_fail_dir="$tmpdir/rm-fail-bin"
+mkdir -p "$rm_fail_dir"
+cat >"$rm_fail_dir/rm" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -e "$cleanup_fail_marker" ]]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *.github-ssh-deploy.*)
+        echo "simulated cleanup failure" >&2
+        exit 1
+        ;;
+    esac
+  done
+fi
+/bin/rm "\$@"
+SH
+chmod +x "$rm_fail_dir/rm"
+cleanup_failure_stderr="$tmpdir/exchange-cleanup-failure.stderr"
+if PATH="$rm_fail_dir:$PATH" run_remote_deploy site-prod reclaim 2>"$cleanup_failure_stderr"; then
+  fail "deploy should fail when exchanged-away cleanup fails"
+fi
+grep -F "simulated cleanup failure" "$cleanup_failure_stderr" >/dev/null || fail "missing simulated cleanup failure"
+assert_symlink_target "$base/current" "releases/reclaim"
+assert_symlink_target "$docroot/index.php" ".github-ssh-deploy/deployments/site-prod/current/index.php"
+assert_file_contains "$docroot/index.php/index.php" "wanted"
+[[ -s "$base/exchanged_paths" ]] || fail "failed cleanup should retain exchanged paths for retry"
+
+rm -f "$cleanup_fail_marker"
+exchange_helper="$tmpdir/exchange-helper"
+mkdir -p "$base/incoming/retry/index.php"
+printf 'retry\n' >"$base/incoming/retry/index.php/index.php"
+run_remote_deploy site-prod retry >/dev/null
+assert_symlink_target "$base/current" "releases/retry"
+assert_file_contains "$docroot/index.php/index.php" "retry"
+[[ ! -e "$base/exchanged_paths" ]] || fail "successful retry should clear exchanged paths"
+
+validator_body="$(awk '/^reconcile_new_claims\(\)/,/^}/' "$remote_deploy")"
+if grep -Fq 'rm -rf -- "$public_path"' <<<"$validator_body"; then
+  fail "reconcile_new_claims must not remove public_path before installing the symlink"
+fi
+
+docroot="$tmpdir/missing-helper-docroot"
+boundaries="$tmpdir/missing-helper-boundaries"
+base="$docroot/.github-ssh-deploy/deployments/site-prod"
+mkdir -p "$base/incoming/prior/index.php" "$base/incoming/reclaim/index.php"
+printf 'prior\n' >"$base/incoming/prior/index.php/index.php"
+printf 'wanted\n' >"$base/incoming/reclaim/index.php/index.php"
+printf '.\n' >"$boundaries"
+run_remote_deploy site-prod prior >/dev/null
+rm -f "$docroot/index.php"
+printf 'manual\n' >"$docroot/index.php"
+missing_helper_stderr="$tmpdir/missing-helper.stderr"
+exchange_helper="$tmpdir/does-not-exist"
+if run_remote_deploy site-prod reclaim 2>"$missing_helper_stderr"; then
+  fail "deploy should reject reclaim when exchange helper is missing"
+fi
+grep -F "exchange helper is required" "$missing_helper_stderr" >/dev/null || fail "missing exchange helper error"
+[[ -f "$docroot/index.php" ]] || fail "missing exchange helper must leave public path in place"
+assert_symlink_target "$base/current" "releases/prior"

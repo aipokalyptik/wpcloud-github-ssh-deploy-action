@@ -21,6 +21,7 @@ tests/test_remote_deploy_layout.sh
 tests/test_remote_deploy_claims.sh
 tests/test_remote_deploy_symlinks.sh
 tests/test_remote_deploy_rollback.sh
+scripts/check-exchange-helper.sh
 ```
 
 It also runs `bash -n` over scripts. If `shellcheck` is installed, it lints the
@@ -31,6 +32,11 @@ boundary and protected-anchor discovery. They do not require real SSH access.
 The transport test uses `GITHUB_SSH_DEPLOY_DRY_RUN=1` to validate generated
 commands and input handling without connecting to a host, including default,
 replacement, and disabled upload excludes.
+
+`scripts/check-exchange-helper.sh` rebuilds the committed Linux amd64
+`exchange-rename` helper from source, verifies the binary matches, checks that
+the source uses `renameat2(RENAME_EXCHANGE)` directly, and runs a smoke test on
+Linux amd64 CI.
 
 ## GitHub CI
 
@@ -118,6 +124,9 @@ Run these against a disposable or non-production site:
 13. Default upload excludes keep common VCS and secret dotfiles out of the
     release; a custom `exclude` list replaces the defaults; `exclude: none`
     disables upload excludes.
+14. Reclaiming an existing public path uses the exchange helper rather than
+    deleting the path first; cleanup failure after exchange leaves `current` and
+    the public symlink on the promoted release while failing the workflow.
 
 Record the workflow URL, release IDs, rollback command, and observed public
 paths in the release checklist. Do not record passwords or private host details

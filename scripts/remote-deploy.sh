@@ -5,8 +5,8 @@ readonly VERSION="0.3.0-claim-compression"
 
 usage() {
   cat <<'USAGE'
-Usage: remote-deploy.sh --docroot PATH --deployment-id ID --release-id ID --keep-releases N [--post-deploy-file PATH] [--print-claims]
-       remote-deploy.sh --docroot PATH --deployment-id ID --rollback-to RELEASE_ID
+Usage: remote-deploy.sh --docroot PATH --deployment-id ID --release-id ID --keep-releases N [--exchange-helper PATH] [--post-deploy-file PATH] [--print-claims]
+       remote-deploy.sh --docroot PATH --deployment-id ID --rollback-to RELEASE_ID [--exchange-helper PATH]
 
 Promote an uploaded incoming release into the deployment namespace and update current.
 
@@ -20,6 +20,10 @@ Options:
   --rollback-to RELEASE_ID
                   Re-point current to an existing release and reconcile managed
                   public symlinks. Post-deploy commands are not run.
+  --exchange-helper PATH
+                  Helper binary that atomically swaps two paths with
+                  renameat2(RENAME_EXCHANGE). Defaults to the uploaded helper in
+                  the deployment namespace.
 USAGE
 }
 
@@ -55,14 +59,8 @@ switch_current() {
     return 0
   fi
 
-  # Some mv implementations do not provide -T. This fallback safely replaces a
-  # file/symlink current pointer, but refuses a real directory.
-  if [[ -d "$current" && ! -L "$current" ]]; then
-    rm -f "$tmp_current"
-    die "current exists as a directory; cannot replace without mv -T"
-  fi
-  rm -f "$current"
-  mv "$tmp_current" "$current"
+  rm -f "$tmp_current"
+  die "atomic current replacement requires mv -T"
 }
 
 acquire_lock() {
@@ -131,6 +129,8 @@ reconcile_new_claims() {
   local docroot="$1"
   local deployment_id="$2"
   local claims_file="$3"
+  local exchange_helper="$4"
+  local exchanged_paths_file="$5"
   local claim
   local public_path
   local parent_dir
@@ -151,9 +151,30 @@ reconcile_new_claims() {
     reject_foreign_deployment_descendant_claim "$deployment_id" "$claim" "$public_path"
     rm -f -- "$tmp_link"
     ln -s "$target" "$tmp_link"
-    rm -rf -- "$public_path"
-    mv -f -- "$tmp_link" "$public_path"
+
+    if [[ ! -e "$public_path" && ! -L "$public_path" ]]; then
+      mv -T -- "$tmp_link" "$public_path"
+      continue
+    fi
+
+    [[ -x "$exchange_helper" ]] || die "exchange helper is required to reclaim existing path: $claim"
+    if ! "$exchange_helper" "$tmp_link" "$public_path"; then
+      rm -f -- "$tmp_link"
+      die "exchange helper failed to reclaim path: $claim"
+    fi
+    printf '%s\n' "$tmp_link" >>"$exchanged_paths_file"
   done <"$claims_file"
+}
+
+cleanup_exchanged_paths() {
+  local exchanged_paths_file="$1"
+  local path
+
+  [[ -f "$exchanged_paths_file" ]] || return 0
+  while IFS= read -r path || [[ -n "$path" ]]; do
+    [[ -n "$path" ]] || continue
+    rm -rf -- "$path"
+  done <"$exchanged_paths_file"
 }
 
 compute_removed_claims() {
@@ -560,6 +581,7 @@ rollback_release() {
   local docroot="$1"
   local deployment_id="$2"
   local rollback_to="$3"
+  local exchange_helper="$4"
 
   local base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local releases_dir="$base/releases"
@@ -570,6 +592,7 @@ rollback_release() {
   local old_claims_file="$base/old_claims"
   local new_claims_file="$base/new_claims"
   local removed_claims_file="$base/removed_claims"
+  local exchanged_paths_file="$base/exchanged_paths"
   local old_release_claims_file="$base/old_release_claims.$$"
   local materialized_claims_file="$base/materialized_claims.$$"
   local current_target=""
@@ -579,6 +602,8 @@ rollback_release() {
   acquire_lock "$lock_file"
 
   [[ -d "$release_dir" ]] || die "rollback release does not exist: $release_dir"
+  cleanup_exchanged_paths "$exchanged_paths_file"
+  rm -f -- "$exchanged_paths_file"
 
   discover_boundary_claims "$docroot" "$boundaries_file"
   discover_protected_anchors "$docroot" "$protected_anchors_file"
@@ -596,11 +621,14 @@ rollback_release() {
   compute_claims "$release_dir" "$boundaries_file" "$new_claims_file"
   validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
   compute_removed_claims "$old_claims_file" "$new_claims_file" "$removed_claims_file"
+  : >"$exchanged_paths_file"
 
   cleanup_overlapping_removed_claims "$docroot" "$deployment_id" "$removed_claims_file" "$new_claims_file"
-  reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file"
+  reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file" "$exchange_helper" "$exchanged_paths_file"
   switch_current "$base" "$rollback_to"
   [[ "$(readlink "$base/current")" == "releases/$rollback_to" ]] || die "current does not point to releases/$rollback_to"
+  cleanup_exchanged_paths "$exchanged_paths_file"
+  rm -f -- "$exchanged_paths_file"
   cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
 
   echo "remote-deploy.sh: current=releases/$rollback_to" >&2
@@ -613,6 +641,7 @@ main() {
   local rollback_to=""
   local keep_releases=""
   local post_deploy_file=""
+  local exchange_helper=""
   local print_claims=0
 
   while (($#)); do
@@ -655,6 +684,11 @@ main() {
         post_deploy_file="$2"
         shift 2
         ;;
+      --exchange-helper)
+        (($# >= 2)) || die "--exchange-helper requires a value"
+        exchange_helper="$2"
+        shift 2
+        ;;
       --print-claims)
         print_claims=1
         shift
@@ -671,9 +705,13 @@ main() {
   rollback_to="$(trim "$rollback_to")"
   keep_releases="$(trim "$keep_releases")"
   post_deploy_file="$(trim "$post_deploy_file")"
+  exchange_helper="$(trim "$exchange_helper")"
 
   [[ -n "$docroot" ]] || die "docroot is required"
   require_id "deployment-id" "$deployment_id"
+  if [[ -z "$exchange_helper" ]]; then
+    exchange_helper="$docroot/.github-ssh-deploy/deployments/$deployment_id/exchange-rename"
+  fi
 
   command -v readlink >/dev/null 2>&1 || die "readlink is required"
   command -v flock >/dev/null 2>&1 || die "flock is required"
@@ -688,7 +726,7 @@ main() {
     [[ -z "$post_deploy_file" ]] || die "--post-deploy-file cannot be used with --rollback-to"
     ((print_claims == 0)) || die "--print-claims cannot be used with --rollback-to"
     require_id "rollback-to" "$rollback_to"
-    rollback_release "$docroot" "$deployment_id" "$rollback_to"
+    rollback_release "$docroot" "$deployment_id" "$rollback_to" "$exchange_helper"
     return
   fi
 
@@ -708,6 +746,7 @@ main() {
   local old_claims_file="$base/old_claims"
   local new_claims_file="$base/new_claims"
   local removed_claims_file="$base/removed_claims"
+  local exchanged_paths_file="$base/exchanged_paths"
   local old_release_claims_file="$base/old_release_claims.$$"
   local materialized_claims_file="$base/materialized_claims.$$"
   local current_target=""
@@ -717,6 +756,8 @@ main() {
   acquire_lock "$lock_file"
 
   [[ -d "$incoming_release" ]] || die "incoming release does not exist: $incoming_release"
+  cleanup_exchanged_paths "$exchanged_paths_file"
+  rm -f -- "$exchanged_paths_file"
 
   discover_boundary_claims "$docroot" "$boundaries_file"
   discover_protected_anchors "$docroot" "$protected_anchors_file"
@@ -742,13 +783,16 @@ main() {
   compute_claims "$incoming_release" "$boundaries_file" "$new_claims_file"
   validate_claims_not_protected "$new_claims_file" "$protected_anchors_file"
   compute_removed_claims "$old_claims_file" "$new_claims_file" "$removed_claims_file"
+  : >"$exchanged_paths_file"
 
   mv "$incoming_release" "$release_dir"
   touch "$release_dir"
   cleanup_overlapping_removed_claims "$docroot" "$deployment_id" "$removed_claims_file" "$new_claims_file"
-  reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file"
+  reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file" "$exchange_helper" "$exchanged_paths_file"
   switch_current "$base" "$release_id"
   [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
+  cleanup_exchanged_paths "$exchanged_paths_file"
+  rm -f -- "$exchanged_paths_file"
   cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
   run_post_deploy "$docroot" "$post_deploy_file"
   prune_releases "$releases_dir" "$keep_releases" "$release_id"

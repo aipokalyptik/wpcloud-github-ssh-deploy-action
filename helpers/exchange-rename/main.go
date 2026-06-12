@@ -1,0 +1,49 @@
+//go:build linux
+
+package main
+
+import (
+	"fmt"
+	"os"
+	"syscall"
+	"unsafe"
+)
+
+const (
+	SYS_RENAMEAT2   = 316
+	RENAME_EXCHANGE = 0x2
+)
+
+var atFdcwd = ^uintptr(99)
+
+func main() {
+	if len(os.Args) != 3 {
+		fmt.Fprintln(os.Stderr, "usage: exchange-rename OLD_PATH NEW_PATH")
+		os.Exit(64)
+	}
+
+	oldPath, err := syscall.BytePtrFromString(os.Args[1])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "exchange-rename: invalid old path: %v\n", err)
+		os.Exit(64)
+	}
+	newPath, err := syscall.BytePtrFromString(os.Args[2])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "exchange-rename: invalid new path: %v\n", err)
+		os.Exit(64)
+	}
+
+	_, _, errno := syscall.Syscall6(
+		SYS_RENAMEAT2,
+		atFdcwd,
+		uintptr(unsafe.Pointer(oldPath)),
+		atFdcwd,
+		uintptr(unsafe.Pointer(newPath)),
+		uintptr(RENAME_EXCHANGE),
+		0,
+	)
+	if errno != 0 {
+		fmt.Fprintf(os.Stderr, "exchange-rename: renameat2 RENAME_EXCHANGE failed: %v\n", errno)
+		os.Exit(1)
+	}
+}

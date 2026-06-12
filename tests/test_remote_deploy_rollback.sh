@@ -31,6 +31,7 @@ run_remote_deploy() {
       --docroot "$docroot" \
       --deployment-id site-prod \
       --release-id "$1" \
+      --exchange-helper "$exchange_helper" \
       --keep-releases 5
 }
 
@@ -39,16 +40,48 @@ run_rollback() {
     "$remote_deploy" \
       --docroot "$docroot" \
       --deployment-id site-prod \
+      --exchange-helper "$exchange_helper" \
       --rollback-to "$1"
 }
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+exchange_helper="$tmpdir/exchange-helper"
+cat >"$exchange_helper" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+old="$1"
+new="$2"
+tmp="${old}.swap.$$"
+mv -T -- "$old" "$tmp"
+mv -T -- "$new" "$old"
+mv -T -- "$tmp" "$new"
+SH
+chmod +x "$exchange_helper"
+
 flock_shim_dir="$tmpdir/bin"
 mkdir -p "$flock_shim_dir"
 printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n' >"$flock_shim_dir/flock"
+cat >"$flock_shim_dir/mv" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+args=()
+no_target=0
+for arg in "$@"; do
+  case "$arg" in
+    -T|--no-target-directory) no_target=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+if ((no_target)) && ((${#args[@]} >= 2)); then
+  dest="${args[$((${#args[@]} - 1))]}"
+  rm -rf -- "$dest"
+fi
+/bin/mv "${args[@]}"
+SH
 chmod +x "$flock_shim_dir/flock"
+chmod +x "$flock_shim_dir/mv"
 export PATH="$flock_shim_dir:$PATH"
 
 docroot="$tmpdir/docroot"
@@ -103,6 +136,7 @@ if GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
   "$remote_deploy" \
     --docroot "$docroot" \
     --deployment-id site-prod \
+    --exchange-helper "$exchange_helper" \
     --rollback-to protected-a \
     2>"$protected_err"; then
   fail "rollback should reject protected target claims"

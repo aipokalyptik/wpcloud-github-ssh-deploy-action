@@ -4,8 +4,8 @@ The action is a composite Bash action. `action.yml` maps inputs into environment
 variables and runs `scripts/deploy.sh`. The transport script validates inputs,
 prepares host key checking, uploads the source tree with `rsync`, applies
 configured upload excludes with `--exclude-from`, uploads
-`scripts/remote-deploy.sh`, optionally uploads a post-deploy hook, and invokes
-the remote helper over password SSH.
+`scripts/remote-deploy.sh`, uploads the static exchange helper, optionally
+uploads a post-deploy hook, and invokes the remote helper over password SSH.
 
 SSH key authentication is not implemented. The transport uses `sshpass` with the
 `password` input.
@@ -26,6 +26,7 @@ releases/<release-id>/       promoted immutable release tree
 current                      symlink to releases/<release-id>
 deploy.lock                  flock lock for promotion and rollback
 remote-deploy.sh             helper used by deploy and manual rollback
+exchange-rename              static linux-amd64 renameat2 exchange helper
 post-deploy/<release-id>.sh  optional uploaded hook
 ```
 
@@ -45,9 +46,16 @@ Promotion is an overlay operation, not a wholesale docroot replacement.
 
 The helper moves the uploaded release from `incoming` to `releases`, creates or
 updates public symlinks for the release claims, switches `current` with a
-temporary symlink plus `mv`, and then removes stale deployment-owned symlinks.
-The `current` pointer is the release selector for all public symlinks owned by
-that deployment.
+temporary symlink plus `mv -T`, and then removes stale deployment-owned
+symlinks. The `current` pointer is the release selector for all public symlinks
+owned by that deployment.
+
+When reclaiming an existing public file or directory, the helper creates the new
+symlink in the same parent directory and swaps it with the existing path using a
+static helper that calls `renameat2(RENAME_EXCHANGE)`. The old public content is
+then left at the temporary path and removed after `current` points at the new
+release. If that cleanup fails, the deploy reports failure after the new release
+is active; a later deploy can retry cleanup.
 
 Deploy and rollback are serialized with `flock` on the namespace lock file.
 
@@ -119,9 +127,11 @@ Important consequences:
 
 Removal behavior is different from wanted-claim reclaim. When a new release
 wants a public claim, the helper may replace an unmanaged real file or directory
-at that exact public path with the deployment symlink. Operators should narrow
-the source tree or boundary shape when unmanaged content must remain at that
-path.
+at that exact public path with the deployment symlink. Existing paths are
+exchanged atomically where the uploaded Linux amd64 helper can run; unsupported
+remote architectures fail before invoking the remote deploy. Operators should
+narrow the source tree or boundary shape when unmanaged content must remain at
+that path.
 
 ## Layered Deployments
 

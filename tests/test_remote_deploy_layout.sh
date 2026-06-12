@@ -30,6 +30,7 @@ run_remote_deploy() {
     --docroot "$docroot" \
     --deployment-id site-prod \
     --release-id "$1" \
+    --exchange-helper "$exchange_helper" \
     --keep-releases "$2"
 }
 
@@ -38,13 +39,54 @@ run_remote_deploy_with_post_deploy() {
     --docroot "$docroot" \
     --deployment-id site-prod \
     --release-id "$1" \
+    --exchange-helper "$exchange_helper" \
     --keep-releases "$2" \
     --post-deploy-file "$3"
 }
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
+
+exchange_helper="$tmpdir/exchange-helper"
+cat >"$exchange_helper" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+old="$1"
+new="$2"
+tmp="${old}.swap.$$"
+mv -T -- "$old" "$tmp"
+mv -T -- "$new" "$old"
+mv -T -- "$tmp" "$new"
+SH
+chmod +x "$exchange_helper"
+
+mv_shim_dir="$tmpdir/mv-shim-bin"
+mkdir -p "$mv_shim_dir"
+cat >"$mv_shim_dir/mv" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+args=()
+no_target=0
+for arg in "$@"; do
+  case "$arg" in
+    -T|--no-target-directory) no_target=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+if ((no_target)) && ((${#args[@]} >= 2)); then
+  dest="${args[$((${#args[@]} - 1))]}"
+  rm -rf -- "$dest"
+fi
+/bin/mv "${args[@]}"
+SH
+chmod +x "$mv_shim_dir/mv"
+export PATH="$mv_shim_dir:$PATH"
 original_path="$PATH"
+
+switch_current_body="$(awk '/^switch_current\(\)/,/^}/' "$remote_deploy")"
+if grep -Fq 'rm -f "$current"' <<<"$switch_current_body"; then
+  fail "switch_current must not remove current before replacing it"
+fi
 
 missing_flock_path="$tmpdir/no-flock-bin"
 mkdir -p "$missing_flock_path"

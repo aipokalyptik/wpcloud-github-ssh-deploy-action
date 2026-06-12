@@ -45,6 +45,19 @@ grep -Eq '(^|[^[:alnum:]_])comm([^[:alnum:]_]|$)' <<<"$validator_body" || fail "
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+exchange_helper="$tmpdir/exchange-helper"
+cat >"$exchange_helper" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+old="$1"
+new="$2"
+tmp="${old}.swap.$$"
+mv -T -- "$old" "$tmp"
+mv -T -- "$new" "$old"
+mv -T -- "$tmp" "$new"
+SH
+chmod +x "$exchange_helper"
+
 flock_shim_dir="$tmpdir/bin"
 mkdir -p "$flock_shim_dir"
 cat >"$flock_shim_dir/flock" <<'SH'
@@ -52,7 +65,25 @@ cat >"$flock_shim_dir/flock" <<'SH'
 set -euo pipefail
 exit 0
 SH
+cat >"$flock_shim_dir/mv" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+args=()
+no_target=0
+for arg in "$@"; do
+  case "$arg" in
+    -T|--no-target-directory) no_target=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+if ((no_target)) && ((${#args[@]} >= 2)); then
+  dest="${args[$((${#args[@]} - 1))]}"
+  rm -rf -- "$dest"
+fi
+/bin/mv "${args[@]}"
+SH
 chmod +x "$flock_shim_dir/flock"
+chmod +x "$flock_shim_dir/mv"
 export PATH="$flock_shim_dir:$PATH"
 
 docroot="$tmpdir/docroot"
@@ -138,6 +169,7 @@ GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
     --docroot "$docroot" \
     --deployment-id site-prod \
     --release-id old-release \
+    --exchange-helper "$exchange_helper" \
     --keep-releases 2 >/dev/null
 
 cat >"$expected" <<'EOF'
@@ -152,6 +184,7 @@ GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
     --docroot "$docroot" \
     --deployment-id site-prod \
     --release-id new-release \
+    --exchange-helper "$exchange_helper" \
     --keep-releases 2 >/dev/null
 
 cat >"$expected" <<'EOF'
@@ -174,6 +207,7 @@ assert_protected_failure() {
       --docroot "$docroot" \
       --deployment-id site-prod \
       --release-id "$release_id" \
+      --exchange-helper "$exchange_helper" \
       --keep-releases 2 \
       2>"$stderr_file"; then
     fail "deploy should reject protected path for $release_id"
@@ -238,5 +272,6 @@ GITHUB_SSH_DEPLOY_BOUNDARIES_FILE="$boundaries" \
     --docroot "$docroot" \
     --deployment-id site-prod \
     --release-id writable-sibling \
+    --exchange-helper "$exchange_helper" \
     --keep-releases 2 >/dev/null
 assert_symlink_target "$base/current" "releases/writable-sibling"

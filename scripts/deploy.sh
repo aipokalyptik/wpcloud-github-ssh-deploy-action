@@ -125,6 +125,35 @@ EXCLUDES
   fi
 }
 
+remote_arch() {
+  local host="$1"
+  local username="$2"
+  shift 2
+  local ssh_options=("$@")
+
+  if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
+    info "dry-run: remote-arch: $(shell_join env "SSHPASS=REDACTED" sshpass -e ssh "${ssh_options[@]}" "$username@$host" uname -m)"
+    printf '%s\n' "x86_64"
+    return 0
+  fi
+
+  env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" uname -m
+}
+
+exchange_helper_for_arch() {
+  local arch="$1"
+  local repo_root="$2"
+
+  case "$arch" in
+    x86_64|amd64)
+      printf '%s\n' "$repo_root/helpers/bin/linux-amd64/exchange-rename"
+      ;;
+    *)
+      die "unsupported remote architecture for exchange helper: $arch"
+      ;;
+  esac
+}
+
 cleanup() {
   if [[ -n "${DEPLOY_TMPDIR:-}" && -z "${GITHUB_SSH_DEPLOY_KEEP_TEMP:-}" && -z "${GITHUB_SSH_DEPLOY_TMPDIR:-}" ]]; then
     rm -rf "$DEPLOY_TMPDIR"
@@ -257,10 +286,13 @@ main() {
   local remote_base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local remote_release="$remote_base/incoming/$release_id"
   local remote_script="$remote_base/remote-deploy.sh"
+  local remote_exchange_helper="$remote_base/exchange-rename"
   local remote_post_deploy="$remote_base/post-deploy/$release_id.sh"
   local local_post_deploy=""
   local local_script_dir
   local_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local repo_root
+  repo_root="$(cd "$local_script_dir/.." && pwd)"
   local source_path="$source"
   if [[ "$source_path" != */ ]]; then
     source_path="$source_path/"
@@ -283,6 +315,7 @@ main() {
   info "release_id=$release_id"
   info "remote_release=$remote_release"
   info "remote_script=$remote_script"
+  info "remote_exchange_helper=$remote_exchange_helper"
   if [[ -n "$(trim "$post_deploy")" ]]; then
     local_post_deploy="$tmpdir/post-deploy.sh"
     printf '%s' "$post_deploy" >"$local_post_deploy"
@@ -292,6 +325,13 @@ main() {
 
   run_or_print "mkdir" \
     env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "mkdir -p $(printf '%q' "$remote_release") $(printf '%q' "${remote_post_deploy%/*}")"
+
+  local arch
+  arch="$(trim "$(remote_arch "$host" "$username" "${ssh_options[@]}")")"
+  info "remote_arch=$arch"
+  local local_exchange_helper
+  local_exchange_helper="$(exchange_helper_for_arch "$arch" "$repo_root")"
+  [[ -f "$local_exchange_helper" ]] || die "exchange helper binary is missing: $local_exchange_helper"
 
   local rsync_args=(-az --delete)
   if (( use_exclude_file )); then
@@ -307,6 +347,12 @@ main() {
   run_or_print "remote-script-chmod" \
     env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 700 $(printf '%q' "$remote_script")"
 
+  run_or_print "exchange-helper-upload" \
+    env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_exchange_helper" "$username@$host:$remote_exchange_helper"
+
+  run_or_print "exchange-helper-chmod" \
+    env "SSHPASS=$password" sshpass -e ssh "${ssh_options[@]}" "$username@$host" "chmod 700 $(printf '%q' "$remote_exchange_helper")"
+
   if [[ -n "$local_post_deploy" ]]; then
     run_or_print "post-deploy-upload" \
       env "SSHPASS=$password" sshpass -e rsync -az -e "$ssh_command" "$local_post_deploy" "$username@$host:$remote_post_deploy"
@@ -316,7 +362,7 @@ main() {
   fi
 
   local remote_deploy_command
-  remote_deploy_command="bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases")"
+  remote_deploy_command="bash $(printf '%q' "$remote_script") --docroot $(printf '%q' "$docroot") --deployment-id $(printf '%q' "$deployment_id") --release-id $(printf '%q' "$release_id") --keep-releases $(printf '%q' "$keep_releases") --exchange-helper $(printf '%q' "$remote_exchange_helper")"
   if [[ -n "$local_post_deploy" ]]; then
     remote_deploy_command+=" --post-deploy-file $(printf '%q' "$remote_post_deploy")"
   fi

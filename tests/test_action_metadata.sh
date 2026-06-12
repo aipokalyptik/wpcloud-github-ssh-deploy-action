@@ -14,6 +14,10 @@ fail() {
 [[ -x "$repo_root/scripts/deploy.sh" ]] || fail "scripts/deploy.sh must be executable"
 [[ -f "$repo_root/scripts/remote-deploy.sh" ]] || fail "scripts/remote-deploy.sh must exist"
 [[ -x "$repo_root/scripts/remote-deploy.sh" ]] || fail "scripts/remote-deploy.sh must be executable"
+[[ -f "$repo_root/scripts/check-exchange-helper.sh" ]] || fail "scripts/check-exchange-helper.sh must exist"
+[[ -x "$repo_root/scripts/check-exchange-helper.sh" ]] || fail "scripts/check-exchange-helper.sh must be executable"
+[[ -f "$repo_root/helpers/exchange-rename/main.go" ]] || fail "exchange helper source must exist"
+[[ -x "$repo_root/helpers/bin/linux-amd64/exchange-rename" ]] || fail "linux-amd64 exchange helper binary must be executable"
 
 for script in "$repo_root/scripts/deploy.sh" "$repo_root/scripts/remote-deploy.sh"; do
   "$script" --help >/dev/null

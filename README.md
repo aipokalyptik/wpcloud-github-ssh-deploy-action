@@ -38,6 +38,9 @@ By default, `source` is the checked-out repository root, common sensitive
 dotfiles and dotdirs are excluded from upload, `docroot` is `/srv/htdocs`,
 `port` is `22`, and `keep-releases` is `2`.
 
+Atomic reclaim of existing public paths currently supports Linux amd64 remote
+hosts. Unsupported remote CPU architectures fail clearly before deployment.
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -159,6 +162,12 @@ The remote helper then moves it into `releases/<release-id>`, updates
 for the release claims. Release IDs are generated from the UTC time plus the
 GitHub SHA prefix unless an internal test override is set.
 
+When a new wanted claim replaces an existing public file or directory, the
+action uploads a small statically linked Linux amd64 helper that performs a
+single `renameat2(RENAME_EXCHANGE)` swap. The public path is exchanged with the
+deployment symlink instead of being removed first; the exchanged-away old content
+is cleaned after `current` points at the new release.
+
 Upload excludes are applied by `rsync` before the release reaches the remote
 host. The built-in list excludes `.git/`, `.github/`, `.svn/`, `.hg/`, `.bzr/`,
 `.aws/`, `.ssh/`, `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, and
@@ -219,6 +228,10 @@ pruned by `keep-releases` or would violate current protected anchors.
 `ssh-keyscan did not return a host key`
 : Provide `known-hosts` explicitly, verify the SSH host and port, or confirm the
   host permits key scanning from the runner network.
+
+`unsupported remote architecture for exchange helper`
+: The remote host is not Linux amd64. The 1.0 helper currently ships only a
+  statically linked amd64 binary.
 
 `Host key verification failed`
 : Refresh the `known-hosts` secret for the exact host and port, or remove it so
