@@ -23,10 +23,7 @@ if grep -Eq 'os\.Rename|exec\.Command|/bin/mv| mv ' "$source_file"; then
 fi
 
 rebuilt="$tmpdir/exchange-rename"
-(
-  cd "$repo_root/helpers/exchange-rename"
-  GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o "$rebuilt" .
-)
+GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o "$rebuilt" "$source_file"
 
 file_output="$(file "$binary_file")"
 case "$file_output" in

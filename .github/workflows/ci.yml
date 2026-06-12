@@ -12,6 +12,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.26.3"
+          cache: false
       - name: Install shellcheck
         run: |
           sudo apt-get update
