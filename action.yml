@@ -14,7 +14,16 @@ inputs:
     required: true
   password:
     description: SSH password.
-    required: true
+    required: false
+    default: ""
+  private-key:
+    description: OpenSSH private key content. Mutually exclusive with password.
+    required: false
+    default: ""
+  private-key-passphrase:
+    description: Optional passphrase for encrypted private-key authentication.
+    required: false
+    default: ""
   docroot:
     description: Remote document root, such as /srv/htdocs.
     required: false
@@ -54,6 +63,8 @@ runs:
         INPUT_PORT: ${{ inputs.port }}
         INPUT_USERNAME: ${{ inputs.username }}
         INPUT_PASSWORD: ${{ inputs.password }}
+        INPUT_PRIVATE_KEY: ${{ inputs.private-key }}
+        INPUT_PRIVATE_KEY_PASSPHRASE: ${{ inputs.private-key-passphrase }}
         INPUT_DOCROOT: ${{ inputs.docroot }}
         INPUT_SOURCE: ${{ inputs.source }}
         INPUT_EXCLUDE: ${{ inputs.exclude }}

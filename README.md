@@ -7,9 +7,6 @@ as a release under the remote docroot, and promotes that release by updating
 deployment-owned public symlinks. It is designed for WordPress sites where the
 host owns parts of the tree and the app needs to deploy only the paths it owns.
 
-SSH key authentication is not implemented in the 1.0 line. The action uses
-password SSH through `sshpass`; key auth is post-1.0 roadmap work.
-
 ## Quick Start
 
 ```yaml
@@ -51,7 +48,9 @@ Customer workflows should pin the action with Git tags such as `@v1`.
 | --- | --- | --- | --- |
 | `host` | Yes | | SSH host name. |
 | `username` | Yes | | SSH username. |
-| `password` | Yes | | SSH password. Masked in GitHub logs. |
+| `password` | No | | SSH password. Mutually exclusive with `private-key`; masked in GitHub logs. |
+| `private-key` | No | | OpenSSH private key content. Mutually exclusive with `password`; masked in GitHub logs. |
+| `private-key-passphrase` | No | | Passphrase for an encrypted `private-key`. Masked in GitHub logs. |
 | `port` | No | `22` | SSH port. Must be `1` through `65535`. |
 | `docroot` | No | `/srv/htdocs` | Remote document root. Must not contain whitespace. |
 | `source` | No | `.` | Local path to upload. A trailing slash is applied for rsync directory contents. |
@@ -61,8 +60,10 @@ Customer workflows should pin the action with Git tags such as `@v1`.
 | `deployment-id` | No | normalized repository slug | Stable deployment namespace. Use this when multiple workflows deploy to the same site. |
 | `known-hosts` | No | | Literal `known_hosts` content. If omitted, the action runs `ssh-keyscan`. |
 
-Required secrets are normally `host`, `username`, and `password`. You can store
-them with any secret names you prefer and map them into the action inputs.
+Required secrets are normally `host`, `username`, and one authentication method:
+either `password` or `private-key`. You can store them with any secret names you
+prefer and map them into the action inputs. If the private key is encrypted,
+also provide `private-key-passphrase`.
 
 ## Optional Examples
 
@@ -74,6 +75,25 @@ with:
   username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
   password: ${{ secrets.WPCLOUD_SSH_PASSWORD }}
   known-hosts: ${{ secrets.WPCLOUD_KNOWN_HOSTS }}
+```
+
+Use an unencrypted private key instead of a password:
+
+```yaml
+with:
+  host: ${{ secrets.WPCLOUD_SSH_HOST }}
+  username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
+  private-key: ${{ secrets.WPCLOUD_SSH_PRIVATE_KEY }}
+```
+
+Use an encrypted private key:
+
+```yaml
+with:
+  host: ${{ secrets.WPCLOUD_SSH_HOST }}
+  username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
+  private-key: ${{ secrets.WPCLOUD_SSH_PRIVATE_KEY }}
+  private-key-passphrase: ${{ secrets.WPCLOUD_SSH_PRIVATE_KEY_PASSPHRASE }}
 ```
 
 Deploy a build output directory and keep five rollback candidates:
@@ -222,12 +242,27 @@ pruned by `keep-releases` or would violate current protected anchors.
 
 ## Troubleshooting
 
-`missing required input: host`, `username`, or `password`
-: Confirm the workflow maps all required secrets to action inputs.
+`missing required input: host` or `username`
+: Confirm the workflow maps all required connection inputs.
+
+`either password or private-key is required`
+: Provide exactly one authentication method.
+
+`password and private-key are mutually exclusive`
+: Remove one authentication method from the workflow.
+
+`private-key-passphrase requires private-key`
+: Provide `private-key` with the passphrase, or remove the passphrase input.
 
 `sshpass is required for deployment`
 : On GitHub-hosted Linux runners the action installs `sshpass` with `apt-get`.
-  On other runners, install `sshpass` before invoking the action.
+  On other runners, install `sshpass` before invoking the action. This applies
+  only to password authentication.
+
+`ssh-agent` or `ssh-add` is required for encrypted private-key authentication
+: Encrypted private keys are loaded into `ssh-agent` with an `SSH_ASKPASS`
+  helper on the runner. Use a GitHub-hosted runner or install the missing
+  runner-side OpenSSH tool.
 
 `ssh-keyscan did not return a host key`
 : Provide `known-hosts` explicitly, verify the SSH host and port, or confirm the

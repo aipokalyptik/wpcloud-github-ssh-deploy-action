@@ -15,6 +15,8 @@ run_deploy() {
     export INPUT_HOST="${INPUT_HOST-example.com}"
     export INPUT_USERNAME="${INPUT_USERNAME-deploy}"
     export INPUT_PASSWORD="${INPUT_PASSWORD-secret-password}"
+    export INPUT_PRIVATE_KEY="${INPUT_PRIVATE_KEY-}"
+    export INPUT_PRIVATE_KEY_PASSPHRASE="${INPUT_PRIVATE_KEY_PASSPHRASE-}"
     export GITHUB_REPOSITORY="${TEST_GITHUB_REPOSITORY-Owner/Example Repo}"
     export GITHUB_SSH_DEPLOY_RELEASE_ID="${GITHUB_SSH_DEPLOY_RELEASE_ID-release-test}"
     "$deploy" "$@"
@@ -39,11 +41,23 @@ fi
 assert_contains "missing required input: username" "$stderr"
 unset INPUT_USERNAME
 
-if INPUT_PASSWORD="" run_deploy "$stdout" "$stderr"; then
-  fail "missing password should fail"
+if INPUT_PASSWORD="" INPUT_PRIVATE_KEY="" run_deploy "$stdout" "$stderr"; then
+  fail "missing auth should fail"
 fi
-assert_contains "missing required input: password" "$stderr"
+assert_contains "either password or private-key is required" "$stderr"
 unset INPUT_PASSWORD
+
+if INPUT_PASSWORD="secret-password" INPUT_PRIVATE_KEY="PRIVATE KEY" run_deploy "$stdout" "$stderr"; then
+  fail "conflicting auth methods should fail"
+fi
+assert_contains "password and private-key are mutually exclusive" "$stderr"
+unset INPUT_PASSWORD INPUT_PRIVATE_KEY
+
+if INPUT_PASSWORD="" INPUT_PRIVATE_KEY_PASSPHRASE="something" run_deploy "$stdout" "$stderr"; then
+  fail "private-key-passphrase without private-key should fail"
+fi
+assert_contains "private-key-passphrase requires private-key" "$stderr"
+unset INPUT_PASSWORD INPUT_PRIVATE_KEY_PASSPHRASE
 
 if run_deploy "$stdout" "$stderr" --skeleton; then
   fail "--skeleton should be rejected as an unknown argument"
@@ -70,6 +84,7 @@ assert_contains "rsync -az --delete --exclude-from=" "$stderr"
 assert_contains "remote_script=/srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/remote-deploy.sh" "$stderr"
 assert_contains "remote_exchange_helper=/srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/exchange-rename" "$stderr"
 assert_contains "remote_arch=x86_64" "$stderr"
+assert_contains "auth_mode=password" "$stderr"
 assert_contains "scripts/remote-deploy.sh" "$stderr"
 assert_contains "helpers/bin/linux-amd64/exchange-rename" "$stderr"
 assert_contains "exchange-helper-upload" "$stderr"
@@ -77,7 +92,47 @@ assert_contains "exchange-helper-chmod" "$stderr"
 assert_contains "remote-deploy owner-example-repo release-test" "$stderr"
 assert_contains "--exchange-helper\\ /srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/exchange-rename" "$stderr"
 assert_contains "env SSHPASS=REDACTED sshpass -e" "$stderr"
+assert_contains "-o PubkeyAuthentication=no" "$stderr"
+assert_contains "-o PreferredAuthentications=password\\,keyboard-interactive" "$stderr"
 assert_not_contains "secret-password" "$stderr"
+
+private_key=$'-----BEGIN OPENSSH PRIVATE KEY-----\nfake-private-key-body\n-----END OPENSSH PRIVATE KEY-----'
+key_tmp="$tmpdir/key-auth"
+INPUT_PASSWORD="" \
+INPUT_PRIVATE_KEY="$private_key" \
+GITHUB_SSH_DEPLOY_TMPDIR="$key_tmp" \
+GITHUB_SSH_DEPLOY_KEEP_TEMP=1 \
+run_deploy "$stdout" "$stderr"
+assert_contains "auth_mode=private-key" "$stderr"
+assert_contains "-o IdentitiesOnly=yes" "$stderr"
+assert_contains "-i $key_tmp/private-key" "$stderr"
+assert_not_contains "sshpass" "$stderr"
+assert_not_contains "fake-private-key-body" "$stdout"
+assert_not_contains "fake-private-key-body" "$stderr"
+[[ -f "$key_tmp/private-key" ]] || fail "private key file should be written"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  key_mode="$(stat -f %Lp "$key_tmp/private-key")"
+else
+  key_mode="$(stat -c %a "$key_tmp/private-key")"
+fi
+[[ "$key_mode" == "600" ]] || fail "private key file should be mode 600"
+assert_contains "PRIVATE_KEY_REDACTED" "$key_tmp/private-key"
+assert_not_contains "fake-private-key-body" "$key_tmp/private-key"
+unset INPUT_PASSWORD INPUT_PRIVATE_KEY
+
+passphrase_tmp="$tmpdir/key-passphrase-auth"
+INPUT_PASSWORD="" \
+INPUT_PRIVATE_KEY="$private_key" \
+INPUT_PRIVATE_KEY_PASSPHRASE="something" \
+GITHUB_SSH_DEPLOY_TMPDIR="$passphrase_tmp" \
+GITHUB_SSH_DEPLOY_KEEP_TEMP=1 \
+run_deploy "$stdout" "$stderr"
+assert_contains "auth_mode=private-key" "$stderr"
+assert_contains "private_key_passphrase=provided" "$stderr"
+assert_not_contains "something" "$stdout"
+assert_not_contains "something" "$stderr"
+assert_not_contains "sshpass" "$stderr"
+unset INPUT_PASSWORD INPUT_PRIVATE_KEY INPUT_PRIVATE_KEY_PASSPHRASE
 
 default_exclude_tmp="$tmpdir/default-excludes"
 GITHUB_SSH_DEPLOY_TMPDIR="$default_exclude_tmp" \

@@ -4,10 +4,14 @@ set -euo pipefail
 readonly VERSION="0.2.0-transport"
 
 password=""
+private_key=""
+private_key_passphrase=""
+auth_mode=""
 DEPLOY_TMPDIR=""
 REMOTE_LOGIN=""
 SSH_COMMAND=""
 SSH_OPTIONS=()
+SSH_AGENT_PID_TO_CLEAN=""
 
 usage() {
   cat <<'USAGE'
@@ -63,13 +67,100 @@ ensure_sshpass() {
 
   if [[ "${GITHUB_ACTIONS:-}" == "true" ]] && [[ "${RUNNER_OS:-}" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
     info "sshpass not found; installing with apt-get"
-    sudo apt-get update
-    sudo apt-get install -y sshpass
+    local sudo_cmd=()
+    if (( EUID != 0 )); then
+      command -v sudo >/dev/null 2>&1 || die "sudo is required to install sshpass on this runner"
+      sudo_cmd=(sudo)
+    fi
+    "${sudo_cmd[@]}" apt-get update
+    "${sudo_cmd[@]}" apt-get install -y sshpass
     command -v sshpass >/dev/null 2>&1 || die "sshpass installation did not provide sshpass"
     return 0
   fi
 
   die "sshpass is required for deployment; install sshpass or run with GITHUB_SSH_DEPLOY_DRY_RUN=1 for command validation"
+}
+
+mask_secret() {
+  local value="$1"
+  local dry_run_redaction="${2:-REDACTED}"
+
+  [[ -n "$value" ]] || return 0
+
+  if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
+    if [[ "$dry_run_redaction" == "__RAW__" ]]; then
+      echo "::add-mask::$value"
+    else
+      echo "::add-mask::$dry_run_redaction"
+    fi
+    return 0
+  fi
+
+  [[ "${GITHUB_ACTIONS:-}" == "true" ]] || return 0
+
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    echo "::add-mask::$line"
+  done <<<"$value"
+}
+
+validate_auth_inputs() {
+  if [[ -n "$(trim "$password")" && -n "$(trim "$private_key")" ]]; then
+    die "password and private-key are mutually exclusive"
+  fi
+
+  if [[ -z "$(trim "$private_key")" && -n "$(trim "$private_key_passphrase")" ]]; then
+    die "private-key-passphrase requires private-key"
+  fi
+
+  if [[ -n "$(trim "$private_key")" ]]; then
+    auth_mode="private-key"
+  elif [[ -n "$(trim "$password")" ]]; then
+    auth_mode="password"
+  else
+    die "either password or private-key is required"
+  fi
+}
+
+write_private_key() {
+  local output_file="$1"
+
+  if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
+    printf '%s\n' "PRIVATE_KEY_REDACTED" >"$output_file"
+  else
+    printf '%s\n' "$private_key" >"$output_file"
+  fi
+  chmod 600 "$output_file"
+}
+
+start_key_agent() {
+  local key_file="$1"
+  local askpass_file="$2"
+
+  command -v ssh-agent >/dev/null 2>&1 || die "ssh-agent is required for encrypted private-key authentication"
+  command -v ssh-add >/dev/null 2>&1 || die "ssh-add is required for encrypted private-key authentication"
+
+  cat >"$askpass_file" <<'SH'
+#!/bin/sh
+printf '%s\n' "${GITHUB_SSH_DEPLOY_KEY_PASSPHRASE:?}"
+SH
+  chmod 700 "$askpass_file"
+
+  local agent_output
+  agent_output="$(ssh-agent -s)"
+  eval "$agent_output" >/dev/null
+  SSH_AGENT_PID_TO_CLEAN="${SSH_AGENT_PID:-}"
+
+  local ssh_add_stderr="$askpass_file.ssh-add.stderr"
+  if ! DISPLAY=none \
+    SSH_ASKPASS="$askpass_file" \
+    SSH_ASKPASS_REQUIRE=force \
+    GITHUB_SSH_DEPLOY_KEY_PASSPHRASE="$private_key_passphrase" \
+    ssh-add "$key_file" </dev/null >/dev/null 2>"$ssh_add_stderr"; then
+    cat "$ssh_add_stderr" >&2
+    die "ssh-add failed for private-key"
+  fi
 }
 
 write_known_hosts() {
@@ -133,12 +224,20 @@ EXCLUDES
 
 remote_arch() {
   if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" == "1" ]]; then
-    info "dry-run: remote-arch: $(shell_join env "SSHPASS=REDACTED" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m)"
+    local cmd=(ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m)
+    if [[ "$auth_mode" == "password" ]]; then
+      cmd=(env "SSHPASS=REDACTED" sshpass -e "${cmd[@]}")
+    fi
+    info "dry-run: remote-arch: $(shell_join "${cmd[@]}")"
     printf '%s\n' "x86_64"
     return 0
   fi
 
-  env "SSHPASS=$password" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
+  if [[ "$auth_mode" == "password" ]]; then
+    env "SSHPASS=$password" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
+  else
+    ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" uname -m
+  fi
 }
 
 exchange_helper_for_arch() {
@@ -156,6 +255,10 @@ exchange_helper_for_arch() {
 }
 
 cleanup() {
+  if [[ -n "${SSH_AGENT_PID_TO_CLEAN:-}" ]]; then
+    SSH_AGENT_PID="$SSH_AGENT_PID_TO_CLEAN" ssh-agent -k >/dev/null 2>&1 || true
+  fi
+
   if [[ -n "${DEPLOY_TMPDIR:-}" && -z "${GITHUB_SSH_DEPLOY_KEEP_TEMP:-}" && -z "${GITHUB_SSH_DEPLOY_TMPDIR:-}" ]]; then
     rm -rf "$DEPLOY_TMPDIR"
   fi
@@ -173,6 +276,8 @@ run_or_print() {
         redacted_args+=("REDACTED")
       elif [[ "$arg" == "SSHPASS=$password" ]]; then
         redacted_args+=("SSHPASS=REDACTED")
+      elif [[ -n "$private_key_passphrase" && "$arg" == "GITHUB_SSH_DEPLOY_KEY_PASSPHRASE=$private_key_passphrase" ]]; then
+        redacted_args+=("GITHUB_SSH_DEPLOY_KEY_PASSPHRASE=REDACTED")
       else
         redacted_args+=("$arg")
       fi
@@ -190,8 +295,12 @@ remote_ssh() {
   local label="$1"
   shift
 
-  run_or_print "$label" \
-    env "SSHPASS=$password" sshpass -e ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" "$@"
+  local cmd=(ssh "${SSH_OPTIONS[@]}" "$REMOTE_LOGIN" "$@")
+  if [[ "$auth_mode" == "password" ]]; then
+    cmd=(env "SSHPASS=$password" sshpass -e "${cmd[@]}")
+  fi
+
+  run_or_print "$label" "${cmd[@]}"
 }
 
 remote_rsync() {
@@ -201,8 +310,12 @@ remote_rsync() {
   shift 3
   local rsync_options=("$@")
 
-  run_or_print "$label" \
-    env "SSHPASS=$password" sshpass -e rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
+  local cmd=(rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg")
+  if [[ "$auth_mode" == "password" ]]; then
+    cmd=(env "SSHPASS=$password" sshpass -e "${cmd[@]}")
+  fi
+
+  run_or_print "$label" "${cmd[@]}"
 }
 
 main() {
@@ -228,6 +341,8 @@ main() {
   local port="${INPUT_PORT:-22}"
   local username="${INPUT_USERNAME:-}"
   password="${INPUT_PASSWORD:-}"
+  private_key="${INPUT_PRIVATE_KEY:-}"
+  private_key_passphrase="${INPUT_PRIVATE_KEY_PASSPHRASE:-}"
   local docroot="${INPUT_DOCROOT:-/srv/htdocs}"
   local source="${INPUT_SOURCE:-.}"
   local exclude_input="${INPUT_EXCLUDE:-}"
@@ -238,7 +353,7 @@ main() {
 
   require_input "host" "$host"
   require_input "username" "$username"
-  require_input "password" "$password"
+  validate_auth_inputs
 
   host="$(trim "$host")"
   port="$(trim "$port")"
@@ -278,10 +393,14 @@ main() {
     command -v ssh >/dev/null 2>&1 || die "ssh is required"
     command -v ssh-keyscan >/dev/null 2>&1 || die "ssh-keyscan is required"
     command -v rsync >/dev/null 2>&1 || die "rsync is required"
-    ensure_sshpass
+    if [[ "$auth_mode" == "password" ]]; then
+      ensure_sshpass
+    fi
   fi
 
-  echo "::add-mask::$password"
+  mask_secret "$password" "__RAW__"
+  mask_secret "$private_key" "PRIVATE_KEY_REDACTED"
+  mask_secret "$private_key_passphrase" "PRIVATE_KEY_PASSPHRASE_REDACTED"
 
   local tmpdir
   if [[ -n "${GITHUB_SSH_DEPLOY_TMPDIR:-}" ]]; then
@@ -298,6 +417,19 @@ main() {
   local exclude_file="$tmpdir/rsync-excludes"
   local use_exclude_file
   use_exclude_file="$(write_excludes "$exclude_input" "$exclude_file")"
+  local private_key_file=""
+  if [[ "$auth_mode" == "private-key" ]]; then
+    private_key_file="$tmpdir/private-key"
+    write_private_key "$private_key_file"
+    if [[ -n "$(trim "$private_key_passphrase")" ]]; then
+      info "private_key_passphrase=provided"
+      if [[ "${GITHUB_SSH_DEPLOY_DRY_RUN:-}" != "1" ]]; then
+        start_key_agent "$private_key_file" "$tmpdir/ssh-askpass"
+      fi
+    else
+      info "private_key_passphrase=none"
+    fi
+  fi
 
   local remote_base="$docroot/.github-ssh-deploy/deployments/$deployment_id"
   local remote_release="$remote_base/incoming/$release_id"
@@ -314,15 +446,21 @@ main() {
     source_path="$source_path/"
   fi
 
-  SSH_OPTIONS=(
-    -o "BatchMode=no"
-    -o "UserKnownHostsFile=$known_hosts_file"
-    -o "StrictHostKeyChecking=yes"
-    -p "$port"
-  )
+  SSH_OPTIONS=(-o "UserKnownHostsFile=$known_hosts_file" -o "StrictHostKeyChecking=yes" -p "$port")
+  if [[ "$auth_mode" == "password" ]]; then
+    SSH_OPTIONS=(
+      -o "BatchMode=no"
+      -o "PubkeyAuthentication=no"
+      -o "PreferredAuthentications=password,keyboard-interactive"
+      "${SSH_OPTIONS[@]}"
+    )
+  else
+    SSH_OPTIONS=(-o "BatchMode=yes" -o "IdentitiesOnly=yes" -i "$private_key_file" "${SSH_OPTIONS[@]}")
+  fi
   REMOTE_LOGIN="$username@$host"
   SSH_COMMAND="$(shell_join ssh "${SSH_OPTIONS[@]}")"
 
+  info "auth_mode=$auth_mode"
   info "port=$port"
   info "docroot=$docroot"
   info "source=$source"

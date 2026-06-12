@@ -26,12 +26,16 @@ for script in "$repo_root/scripts/deploy.sh" "$repo_root/scripts/remote-deploy.s
   "$script" --version >/dev/null
 done
 
-for input in host port username password docroot source exclude keep-releases post-deploy deployment-id known-hosts; do
+for input in host port username password private-key private-key-passphrase docroot source exclude keep-releases post-deploy deployment-id known-hosts; do
   grep -Eq "^[[:space:]]{2}${input}:" "$action_file" || fail "missing input: $input"
 done
 
 grep -EA4 "^[[:space:]]{2}port:" "$action_file" | grep -Fq 'default: "22"' || fail "port must default to 22"
 grep -EA5 "^[[:space:]]{2}docroot:" "$action_file" | grep -Fq 'default: /srv/htdocs' || fail "docroot must default to /srv/htdocs"
+grep -EA5 "^[[:space:]]{2}password:" "$action_file" | grep -Fq 'required: false' || fail "password must be optional when private-key auth is available"
+grep -EA5 "^[[:space:]]{2}private-key:" "$action_file" | grep -Fq 'required: false' || fail "private-key must be optional"
+grep -Fq "INPUT_PRIVATE_KEY:" "$action_file" || fail "private-key input must be mapped to deploy.sh"
+grep -Fq "INPUT_PRIVATE_KEY_PASSPHRASE:" "$action_file" || fail "private-key-passphrase input must be mapped to deploy.sh"
 
 grep -Eq "^[[:space:]]{2}using:[[:space:]]+'?composite'?" "$action_file" || fail "action must use composite runs"
 grep -Fq "scripts/deploy.sh" "$action_file" || fail "action must call scripts/deploy.sh"

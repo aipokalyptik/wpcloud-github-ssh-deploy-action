@@ -5,10 +5,18 @@ variables and runs `scripts/deploy.sh`. The transport script validates inputs,
 prepares host key checking, uploads the source tree with `rsync`, applies
 configured upload excludes with `--exclude-from`, uploads
 `scripts/remote-deploy.sh`, uploads the static exchange helper, optionally
-uploads a post-deploy hook, and invokes the remote helper over password SSH.
+uploads a post-deploy hook, and invokes the remote helper over the selected SSH
+authentication method.
+The transport supports exactly one authentication method per run:
 
-SSH key authentication is not implemented. The transport uses `sshpass` with the
-`password` input.
+- password auth uses `sshpass` with the `password` input;
+- private-key auth writes `private-key` to a temporary `0600` key file and uses
+  OpenSSH with `-i` and `IdentitiesOnly=yes`;
+- encrypted private keys are loaded once into `ssh-agent` through an
+  `SSH_ASKPASS` helper using `private-key-passphrase`.
+
+All auth setup happens on the runner. No additional remote dependency is added
+for private-key authentication.
 
 ## Remote Layout
 

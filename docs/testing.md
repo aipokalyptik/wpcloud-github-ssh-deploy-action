@@ -55,6 +55,11 @@ Use GitHub repository or environment secrets in the private testbed:
 WPCLOUD_SSH_HOST
 WPCLOUD_SSH_USERNAME
 WPCLOUD_SSH_PASSWORD
+WPCLOUD_SSH_KEY_USERNAME
+WPCLOUD_SSH_PRIVATE_KEY
+WPCLOUD_SSH_ENCRYPTED_KEY_USERNAME
+WPCLOUD_SSH_ENCRYPTED_PRIVATE_KEY
+WPCLOUD_SSH_ENCRYPTED_PRIVATE_KEY_PASSPHRASE
 WPCLOUD_KNOWN_HOSTS   optional but recommended
 ```
 
@@ -91,6 +96,29 @@ jobs:
           keep-releases: 3
 ```
 
+Add parallel or matrix jobs for key authentication by replacing the auth inputs:
+
+```yaml
+with:
+  host: ${{ secrets.WPCLOUD_SSH_HOST }}
+  username: ${{ secrets.WPCLOUD_SSH_KEY_USERNAME }}
+  private-key: ${{ secrets.WPCLOUD_SSH_PRIVATE_KEY }}
+  known-hosts: ${{ secrets.WPCLOUD_KNOWN_HOSTS }}
+  docroot: /srv/htdocs
+  deployment-id: testbed-key
+```
+
+```yaml
+with:
+  host: ${{ secrets.WPCLOUD_SSH_HOST }}
+  username: ${{ secrets.WPCLOUD_SSH_ENCRYPTED_KEY_USERNAME }}
+  private-key: ${{ secrets.WPCLOUD_SSH_ENCRYPTED_PRIVATE_KEY }}
+  private-key-passphrase: ${{ secrets.WPCLOUD_SSH_ENCRYPTED_PRIVATE_KEY_PASSPHRASE }}
+  known-hosts: ${{ secrets.WPCLOUD_KNOWN_HOSTS }}
+  docroot: /srv/htdocs
+  deployment-id: testbed-encrypted-key
+```
+
 ## E2E Scenarios
 
 Run these against a disposable or non-production site:
@@ -121,10 +149,14 @@ Run these against a disposable or non-production site:
    pruned release.
 12. `known-hosts` succeeds with a pinned host key; omitting it falls back to
     `ssh-keyscan`.
-13. Default upload excludes keep common VCS and secret dotfiles out of the
+13. Password auth, unencrypted private-key auth, and encrypted private-key auth
+    all complete an end-to-end deployment.
+14. Missing auth, conflicting password plus private key, and passphrase without
+    a private key fail before upload.
+15. Default upload excludes keep common VCS and secret dotfiles out of the
     release; a custom `exclude` list replaces the defaults; `exclude: none`
     disables upload excludes.
-14. Reclaiming an existing public path uses the exchange helper rather than
+16. Reclaiming an existing public path uses the exchange helper rather than
     deleting the path first; cleanup failure after exchange leaves `current` and
     the public symlink on the promoted release while failing the workflow.
 

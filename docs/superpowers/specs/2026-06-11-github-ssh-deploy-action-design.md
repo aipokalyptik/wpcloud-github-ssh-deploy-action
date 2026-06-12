@@ -4,7 +4,7 @@ Date: 2026-06-11
 
 ## Goal
 
-Build a reusable GitHub Action that deploys files from a GitHub repository to a fixed SSH-only web docroot using username/password authentication while preserving atomic deploy behavior for managed paths.
+Build a reusable GitHub Action that deploys files from a GitHub repository to a fixed SSH-only web docroot using either password or private-key SSH authentication while preserving atomic deploy behavior for managed paths.
 
 The target environment has these constraints:
 
@@ -64,6 +64,9 @@ jobs:
 ```
 
 `keep-releases` defaults to `2`.
+
+Authentication requires exactly one method: `password` or `private-key`.
+Encrypted private keys also require `private-key-passphrase`.
 
 `post-deploy` is optional. If omitted, no post-deploy commands run. If provided, the action runs exactly the listed commands in order.
 
@@ -258,13 +261,13 @@ The remote host has enough standard tooling for a lightweight implementation:
 - `rm`
 - `logger`
 
-V1 should use a readable Bash remote script with newline-delimited claim files and standard Unix set operations. It should not require Perl, PHP, Python, Go, a daemon, a database, or a custom sync protocol.
+V1 should use a readable Bash remote script with newline-delimited claim files and standard Unix set operations. It should not require Perl, PHP, Python, a daemon, a database, or a custom sync protocol on the remote host.
 
-A future Go helper is acceptable if claim planning becomes too complex, but v1 should avoid that dependency.
+A future Go helper is acceptable if claim planning becomes too complex, but v1 should avoid that dependency for remote claim logic.
 
 ## Deploy Flow
 
-1. Establish SSH using the configured username and password.
+1. Establish SSH using the configured username and selected authentication method.
 2. Acquire a remote deploy lock with `flock`.
 3. Use the configured docroot path as the deployment base.
 4. Create `.github-ssh-deploy/deployments/<deployment-id>/incoming/<release-id>`.
