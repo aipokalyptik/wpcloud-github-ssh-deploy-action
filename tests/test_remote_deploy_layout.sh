@@ -145,6 +145,7 @@ printf 'delta\n' >"$base/incoming/20260611010404-d/index.php"
     --docroot "$docroot" \
     --deployment-id site-prod \
     --release-id 20260611010404-d \
+    --exchange-helper "$exchange_helper" \
     --keep-releases 2 &
   child=$!
   sleep 0.2
