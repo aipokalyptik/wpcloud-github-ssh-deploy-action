@@ -10,6 +10,7 @@ auth_mode=""
 DEPLOY_TMPDIR=""
 REMOTE_LOGIN=""
 SSH_COMMAND=""
+RSYNC_SSH_COMMAND=""
 SSH_OPTIONS=()
 SSH_AGENT_PID_TO_CLEAN=""
 
@@ -312,8 +313,9 @@ run_authenticated() {
   local label="$1"
   shift
 
-  # Keep the password-mode sshpass wrapper in one place so ssh, rsync, and
-  # remote architecture probing cannot drift in how they authenticate.
+  # Keep direct SSH password wrapping in one place so probes and remote commands
+  # cannot drift. rsync is handled separately because its child SSH process must
+  # be wrapped inside the rsync remote-shell command.
   if [[ "$auth_mode" == "password" ]]; then
     run_or_print "$label" env "SSHPASS=$password" sshpass -e "$@"
   else
@@ -335,7 +337,11 @@ remote_rsync() {
   shift 3
   local rsync_options=("$@")
 
-  run_authenticated "$label" rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
+  if [[ "$auth_mode" == "password" ]]; then
+    run_or_print "$label" env "SSHPASS=$password" rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
+  else
+    run_or_print "$label" rsync "${rsync_options[@]}" -e "$RSYNC_SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
+  fi
 }
 
 main() {
@@ -483,6 +489,13 @@ main() {
   fi
   REMOTE_LOGIN="$username@$host"
   SSH_COMMAND="$(shell_join ssh "${SSH_OPTIONS[@]}")"
+  if [[ "$auth_mode" == "password" ]]; then
+    # sshpass must wrap the SSH process that rsync launches via -e. Wrapping
+    # rsync itself can leave the nested ssh prompt unanswered on some hosts.
+    RSYNC_SSH_COMMAND="$(shell_join sshpass -e ssh "${SSH_OPTIONS[@]}")"
+  else
+    RSYNC_SSH_COMMAND="$SSH_COMMAND"
+  fi
 
   info "auth_mode=$auth_mode"
   info "port=$port"
