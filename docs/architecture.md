@@ -18,6 +18,10 @@ For a deployment namespace, all remote state lives below:
 <docroot>/.github-ssh-deploy/deployments/<deployment-id>/
 ```
 
+`docroot` must not contain whitespace. The transport treats that as an explicit
+input constraint because rsync remote destinations are passed through the
+remote shell.
+
 Important paths:
 
 ```text

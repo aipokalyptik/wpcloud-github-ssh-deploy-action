@@ -42,6 +42,9 @@ Atomic reclaim of existing public paths currently supports Linux amd64 remote
 hosts with standard tools including `flock` and `mv -T`. Unsupported remote
 CPU architectures or missing required tools fail clearly before deployment.
 
+Script `--version` values are internal component markers for troubleshooting.
+Customer workflows should pin the action with Git tags such as `@v1`.
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -50,7 +53,7 @@ CPU architectures or missing required tools fail clearly before deployment.
 | `username` | Yes | | SSH username. |
 | `password` | Yes | | SSH password. Masked in GitHub logs. |
 | `port` | No | `22` | SSH port. Must be `1` through `65535`. |
-| `docroot` | No | `/srv/htdocs` | Remote document root. |
+| `docroot` | No | `/srv/htdocs` | Remote document root. Must not contain whitespace. |
 | `source` | No | `.` | Local path to upload. A trailing slash is applied for rsync directory contents. |
 | `exclude` | No | built-in list | Newline-delimited rsync exclude patterns. Omit for common dotfile defaults, provide a list to replace them, or set `none` to disable excludes. |
 | `keep-releases` | No | `2` | Number of remote releases to keep for this deployment namespace. Must be positive. |

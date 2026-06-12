@@ -17,6 +17,7 @@ fail() {
 
 grep -Fq "SYS_RENAMEAT2" "$source_file" || fail "helper must call renameat2 directly"
 grep -Fq "RENAME_EXCHANGE = 0x2" "$source_file" || fail "helper must use RENAME_EXCHANGE"
+grep -Fxq "//go:build linux && amd64" "$source_file" || fail "helper source must only build for linux amd64"
 if grep -Eq 'os\.Rename|exec\.Command|/bin/mv| mv ' "$source_file"; then
   fail "helper must not use non-atomic rename or shell mv fallback"
 fi
@@ -24,7 +25,7 @@ fi
 rebuilt="$tmpdir/exchange-rename"
 (
   cd "$repo_root/helpers/exchange-rename"
-  GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -buildid=" -o "$rebuilt" .
+  GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o "$rebuilt" .
 )
 
 file_output="$(file "$binary_file")"
@@ -38,6 +39,8 @@ case "$rebuilt_file_output" in
   *"ELF 64-bit"*x86-64*statically\ linked*) ;;
   *) fail "rebuilt helper must be a statically linked linux-amd64 ELF: $rebuilt_file_output" ;;
 esac
+
+cmp -s "$binary_file" "$rebuilt" || fail "committed helper binary does not match rebuilt source"
 
 smoke_exchange() {
   local helper="$1"

@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 action_file="$repo_root/action.yml"
+helper_source="$repo_root/helpers/exchange-rename/main.go"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -16,7 +17,7 @@ fail() {
 [[ -x "$repo_root/scripts/remote-deploy.sh" ]] || fail "scripts/remote-deploy.sh must be executable"
 [[ -f "$repo_root/scripts/check-exchange-helper.sh" ]] || fail "scripts/check-exchange-helper.sh must exist"
 [[ -x "$repo_root/scripts/check-exchange-helper.sh" ]] || fail "scripts/check-exchange-helper.sh must be executable"
-[[ -f "$repo_root/helpers/exchange-rename/main.go" ]] || fail "exchange helper source must exist"
+[[ -f "$helper_source" ]] || fail "exchange helper source must exist"
 [[ -x "$repo_root/helpers/bin/linux-amd64/exchange-rename" ]] || fail "linux-amd64 exchange helper binary must be executable"
 
 for script in "$repo_root/scripts/deploy.sh" "$repo_root/scripts/remote-deploy.sh"; do
@@ -37,3 +38,5 @@ grep -Fq "scripts/deploy.sh" "$action_file" || fail "action must call scripts/de
 if grep -Eq '<\(|>\(|/dev/fd' "$repo_root/scripts/remote-deploy.sh"; then
   fail "remote-deploy.sh must not require /dev/fd process substitution on remote hosts"
 fi
+
+grep -Fxq "//go:build linux && amd64" "$helper_source" || fail "exchange helper source must be constrained to linux amd64"

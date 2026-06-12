@@ -54,9 +54,29 @@ if PATH="$missing_flock_path" /bin/bash "$remote_deploy" \
 fi
 grep -Fq "flock is required" "$missing_flock_err" || fail "missing flock failure should be explicit"
 
+for missing_command in grep cat touch; do
+  missing_command_path="$tmpdir/no-$missing_command-bin"
+  mkdir -p "$missing_command_path"
+  install_flock_shim "$missing_command_path"
+  for required_command in readlink find sort comm cut ln rm mv mkdir mktemp grep cat touch; do
+    [[ "$required_command" == "$missing_command" ]] && continue
+    ln -sf "$(command -v "$required_command")" "$missing_command_path/$required_command"
+  done
+  missing_command_err="$tmpdir/missing-$missing_command.err"
+  if PATH="$missing_command_path" /bin/bash "$remote_deploy" \
+    --docroot "$tmpdir/no-$missing_command-docroot" \
+    --deployment-id site-prod \
+    --release-id "no-$missing_command-release" \
+    --keep-releases 1 \
+    2>"$missing_command_err"; then
+    fail "deploy should fail when $missing_command is unavailable"
+  fi
+  grep -Fq "$missing_command is required" "$missing_command_err" || fail "missing $missing_command failure should be explicit"
+done
+
 missing_mv_t_path="$tmpdir/no-mv-t-bin"
 mkdir -p "$missing_mv_t_path"
-for required_command in readlink find sort comm cut ln rm mkdir mktemp; do
+for required_command in readlink find sort comm cut ln rm mkdir mktemp grep cat touch; do
   ln -s "$(command -v "$required_command")" "$missing_mv_t_path/$required_command"
 done
 install_flock_shim "$missing_mv_t_path"
@@ -104,9 +124,11 @@ assert_file_contains "$base/releases/20260611010101-a/index.php" "alpha"
 assert_symlink_target "$base/current" "releases/20260611010101-a"
 [[ -f "$base/deploy.lock" ]] || fail "deploy lock file should exist"
 
+mkdir -p "$base/.tmp.stale-before-next-run"
 run_remote_deploy 20260611010202-b 2
 assert_symlink_target "$base/current" "releases/20260611010202-b"
 [[ -d "$base/releases/20260611010101-a" ]] || fail "previous release should be retained"
+[[ ! -e "$base/.tmp.stale-before-next-run" ]] || fail "stale scratch directory should be cleaned on the next deploy"
 
 run_remote_deploy 20260611010303-c 2
 assert_symlink_target "$base/current" "releases/20260611010303-c"

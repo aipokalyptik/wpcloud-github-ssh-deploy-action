@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && amd64
 
 package main
 
@@ -12,9 +12,10 @@ import (
 const (
 	SYS_RENAMEAT2   = 316
 	RENAME_EXCHANGE = 0x2
+	// AT_FDCWD is -100. Syscall arguments are uintptr, so encode it as
+	// two's-complement uintptr instead of passing a signed integer.
+	AT_FDCWD = ^uintptr(99)
 )
-
-var atFdcwd = ^uintptr(99)
 
 func main() {
 	if len(os.Args) != 3 {
@@ -35,9 +36,9 @@ func main() {
 
 	_, _, errno := syscall.Syscall6(
 		SYS_RENAMEAT2,
-		atFdcwd,
+		AT_FDCWD,
 		uintptr(unsafe.Pointer(oldPath)),
-		atFdcwd,
+		AT_FDCWD,
 		uintptr(unsafe.Pointer(newPath)),
 		uintptr(RENAME_EXCHANGE),
 		0,

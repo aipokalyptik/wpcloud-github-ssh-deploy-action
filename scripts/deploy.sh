@@ -3,6 +3,12 @@ set -euo pipefail
 
 readonly VERSION="0.2.0-transport"
 
+password=""
+DEPLOY_TMPDIR=""
+REMOTE_LOGIN=""
+SSH_COMMAND=""
+SSH_OPTIONS=()
+
 usage() {
   cat <<'USAGE'
 Usage: deploy.sh [--help|--version]
@@ -190,18 +196,14 @@ remote_ssh() {
 
 remote_rsync() {
   local label="$1"
+  local source_path_arg="$2"
+  local remote_path_arg="$3"
   shift
-  local count=$#
-  local args=("$@")
-  local options_count=$((count - 2))
-  local source_path_arg
-  local remote_path_arg
+  shift
+  shift
   local rsync_options=()
 
-  ((count >= 2)) || die "remote_rsync requires a source and destination"
-  source_path_arg="${args[$((count - 2))]}"
-  remote_path_arg="${args[$((count - 1))]}"
-  rsync_options=("${args[@]:0:$options_count}")
+  rsync_options=("$@")
   run_or_print "$label" \
     env "SSHPASS=$password" sshpass -e rsync "${rsync_options[@]}" -e "$SSH_COMMAND" "$source_path_arg" "$remote_path_arg"
 }
@@ -215,9 +217,6 @@ main() {
     --version)
       echo "$VERSION"
       exit 0
-      ;;
-    --skeleton)
-      die "--skeleton is no longer supported; run deploy.sh without arguments"
       ;;
     "")
       ;;
@@ -255,6 +254,7 @@ main() {
     die "port must be an integer from 1 to 65535"
   fi
   [[ -n "$docroot" ]] || die "docroot must not be empty"
+  [[ "$docroot" != *[[:space:]]* ]] || die "docroot must not contain whitespace"
   [[ -n "$source" ]] || die "source must not be empty"
   if [[ ! "$keep_releases" =~ ^[0-9]+$ ]] || (( 10#$keep_releases < 1 )); then
     die "keep-releases must be a positive integer"
@@ -342,7 +342,12 @@ main() {
     info "remote_post_deploy=$remote_post_deploy"
   fi
 
-  remote_ssh "mkdir" "mkdir -p $(printf '%q' "$remote_release") $(printf '%q' "${remote_post_deploy%/*}")"
+  local remote_mkdir_command
+  remote_mkdir_command="mkdir -p $(printf '%q' "$remote_release")"
+  if [[ -n "$local_post_deploy" ]]; then
+    remote_mkdir_command+=" $(printf '%q' "${remote_post_deploy%/*}")"
+  fi
+  remote_ssh "mkdir" "$remote_mkdir_command"
 
   local arch
   arch="$(trim "$(remote_arch)")"
@@ -356,18 +361,18 @@ main() {
     rsync_args+=(--exclude-from="$exclude_file")
   fi
 
-  remote_rsync "rsync" "${rsync_args[@]}" "$source_path" "$REMOTE_LOGIN:$remote_release/"
+  remote_rsync "rsync" "$source_path" "$REMOTE_LOGIN:$remote_release/" "${rsync_args[@]}"
 
-  remote_rsync "remote-script-upload" -az "$local_script_dir/remote-deploy.sh" "$REMOTE_LOGIN:$remote_script"
+  remote_rsync "remote-script-upload" "$local_script_dir/remote-deploy.sh" "$REMOTE_LOGIN:$remote_script" -az
 
   remote_ssh "remote-script-chmod" "chmod 700 $(printf '%q' "$remote_script")"
 
-  remote_rsync "exchange-helper-upload" -az "$local_exchange_helper" "$REMOTE_LOGIN:$remote_exchange_helper"
+  remote_rsync "exchange-helper-upload" "$local_exchange_helper" "$REMOTE_LOGIN:$remote_exchange_helper" -az
 
   remote_ssh "exchange-helper-chmod" "chmod 700 $(printf '%q' "$remote_exchange_helper")"
 
   if [[ -n "$local_post_deploy" ]]; then
-    remote_rsync "post-deploy-upload" -az "$local_post_deploy" "$REMOTE_LOGIN:$remote_post_deploy"
+    remote_rsync "post-deploy-upload" "$local_post_deploy" "$REMOTE_LOGIN:$remote_post_deploy" -az
 
     remote_ssh "post-deploy-chmod" "chmod 600 $(printf '%q' "$remote_post_deploy")"
   fi
@@ -389,9 +394,4 @@ main() {
   remote_ssh "remote-deploy $deployment_id $release_id" "$remote_deploy_command"
 }
 
-password=""
-DEPLOY_TMPDIR=""
-REMOTE_LOGIN=""
-SSH_COMMAND=""
-SSH_OPTIONS=()
 main "$@"

@@ -58,7 +58,7 @@ require_remote_capabilities() {
   local command_name
   local probe_dir
 
-  for command_name in readlink flock find sort comm cut ln rm mv mkdir mktemp; do
+  for command_name in readlink flock find sort comm cut grep cat ln rm mv mkdir mktemp touch; do
     command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required"
   done
 
@@ -77,6 +77,16 @@ create_scratch_dir() {
   cleanup_run_scratch
   RUN_SCRATCH_DIR="$(mktemp -d "$base/.tmp.XXXXXX")" || die "could not create scratch directory under $base"
   printf '%s\n' "$RUN_SCRATCH_DIR"
+}
+
+sweep_stale_scratch_dirs() {
+  local base="$1"
+  local scratch_path
+
+  { find "$base" -mindepth 1 -maxdepth 1 -type d -name '.tmp.*' -print0 2>/dev/null || true; } |
+  while IFS= read -r -d '' scratch_path; do
+    rm -rf -- "$scratch_path"
+  done
 }
 
 switch_current() {
@@ -411,53 +421,47 @@ normalize_public_path() {
 }
 
 discover_boundary_claims() {
-  local docroot="$1"
-  local output_file="$2"
-  local boundary
-  local normalized
-
-  : >"$output_file"
-
-  if [[ -n "${GITHUB_SSH_DEPLOY_BOUNDARIES_FILE:-}" ]]; then
-    [[ -f "$GITHUB_SSH_DEPLOY_BOUNDARIES_FILE" ]] || die "boundary override file does not exist: $GITHUB_SSH_DEPLOY_BOUNDARIES_FILE"
-    while IFS= read -r boundary || [[ -n "$boundary" ]]; do
-      normalized="$(normalize_public_path "$boundary")"
-      printf '%s\n' "$normalized"
-    done <"$GITHUB_SSH_DEPLOY_BOUNDARIES_FILE"
-  else
-    { find "$docroot" -type d \( -uid 0 -or -gid 0 \) -and -perm -1000 2>/dev/null || true; } |
-    while IFS= read -r boundary; do
-      if [[ "$boundary" == "$docroot" ]]; then
-        normalized=""
-      else
-        normalized="$(normalize_public_path "${boundary#"$docroot"/}")"
-      fi
-      printf '%s\n' "$normalized"
-    done
-  fi | sort -u >"$output_file"
+  discover_docroot_paths \
+    "$1" \
+    "${GITHUB_SSH_DEPLOY_BOUNDARIES_FILE:-}" \
+    "boundary" \
+    "$2" \
+    -type d \( -uid 0 -or -gid 0 \) -and -perm -1000
 }
 
 discover_protected_anchors() {
   local docroot="$1"
   local output_file="$2"
-  local anchor
+  discover_docroot_paths \
+    "$docroot" \
+    "${GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE:-}" \
+    "protected anchors" \
+    "$output_file" \
+    \( -uid 0 -or -gid 0 \) -and -not -writable
+}
+
+discover_docroot_paths() {
+  local docroot="$1"
+  local override_file="$2"
+  local label="$3"
+  local output_file="$4"
+  shift 4
+  local path
   local normalized
 
-  : >"$output_file"
-
-  if [[ -n "${GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE:-}" ]]; then
-    [[ -f "$GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE" ]] || die "protected anchors override file does not exist: $GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE"
-    while IFS= read -r anchor || [[ -n "$anchor" ]]; do
-      normalized="$(normalize_public_path "$anchor")"
+  if [[ -n "$override_file" ]]; then
+    [[ -f "$override_file" ]] || die "$label override file does not exist: $override_file"
+    while IFS= read -r path || [[ -n "$path" ]]; do
+      normalized="$(normalize_public_path "$path")"
       printf '%s\n' "$normalized"
-    done <"$GITHUB_SSH_DEPLOY_PROTECTED_ANCHORS_FILE"
+    done <"$override_file"
   else
-    { find "$docroot" \( -uid 0 -or -gid 0 \) -and -not -writable 2>/dev/null || true; } |
-    while IFS= read -r anchor; do
-      if [[ "$anchor" == "$docroot" ]]; then
+    { find "$docroot" "$@" 2>/dev/null || true; } |
+    while IFS= read -r path; do
+      if [[ "$path" == "$docroot" ]]; then
         normalized=""
       else
-        normalized="$(normalize_public_path "${anchor#"$docroot"/}")"
+        normalized="$(normalize_public_path "${path#"$docroot"/}")"
       fi
       printf '%s\n' "$normalized"
     done
@@ -467,8 +471,6 @@ discover_protected_anchors() {
 validate_claims_not_protected() {
   local claims_file="$1"
   local protected_anchors_file="$2"
-  local claim
-  local ancestor
   local pair
   local tmp_prefix
   local ancestor_pairs_file
@@ -488,40 +490,15 @@ validate_claims_not_protected() {
   protected_ancestor_keys_file="$tmp_prefix.protected-ancestor-keys"
   protected_keys_file="$tmp_prefix.protected-keys"
   blocked_anchors_file="$tmp_prefix.blocked-anchors"
-  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$claim_keys_file" "$protected_ancestor_pairs_file" "$protected_ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
 
-  while IFS= read -r claim || [[ -n "$claim" ]]; do
-    ancestor="$claim"
-    while true; do
-      printf '%s\t%s\n' "$ancestor" "$claim"
-      [[ -z "$ancestor" ]] && break
-
-      if [[ "$ancestor" == */* ]]; then
-        ancestor="${ancestor%/*}"
-      else
-        ancestor=""
-      fi
-    done
-  done <"$claims_file" >"$ancestor_pairs_file"
+  expand_ancestor_pairs "$claims_file" >"$ancestor_pairs_file"
 
   cut -f1 "$ancestor_pairs_file" | sort -u >"$ancestor_keys_file"
   sort -u "$claims_file" >"$claim_keys_file"
   sort -u "$protected_anchors_file" >"$protected_keys_file"
   comm -12 "$protected_keys_file" "$ancestor_keys_file" >"$blocked_anchors_file"
 
-  while IFS= read -r claim || [[ -n "$claim" ]]; do
-    ancestor="$claim"
-    while true; do
-      printf '%s\t%s\n' "$ancestor" "$claim"
-      [[ -z "$ancestor" ]] && break
-
-      if [[ "$ancestor" == */* ]]; then
-        ancestor="${ancestor%/*}"
-      else
-        ancestor=""
-      fi
-    done
-  done <"$protected_keys_file" >"$protected_ancestor_pairs_file"
+  expand_ancestor_pairs "$protected_keys_file" >"$protected_ancestor_pairs_file"
 
   cut -f1 "$protected_ancestor_pairs_file" | sort -u >"$protected_ancestor_keys_file"
   comm -12 "$claim_keys_file" "$protected_ancestor_keys_file" >>"$blocked_anchors_file"
@@ -536,11 +513,28 @@ validate_claims_not_protected() {
         fi
       done <"$ancestor_pairs_file"
     )"
-    rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$claim_keys_file" "$protected_ancestor_pairs_file" "$protected_ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
     die "protected path: $blocked_claim"
   fi
+}
 
-  rm -f -- "$ancestor_pairs_file" "$ancestor_keys_file" "$claim_keys_file" "$protected_ancestor_pairs_file" "$protected_ancestor_keys_file" "$protected_keys_file" "$blocked_anchors_file"
+expand_ancestor_pairs() {
+  local input_file="$1"
+  local claim
+  local ancestor
+
+  while IFS= read -r claim || [[ -n "$claim" ]]; do
+    ancestor="$claim"
+    while true; do
+      printf '%s\t%s\n' "$ancestor" "$claim"
+      [[ -z "$ancestor" ]] && break
+
+      if [[ "$ancestor" == */* ]]; then
+        ancestor="${ancestor%/*}"
+      else
+        ancestor=""
+      fi
+    done
+  done <"$input_file"
 }
 
 claim_for_path() {
@@ -654,12 +648,18 @@ apply_claim_transition() {
   local exchanged_paths_file="$base/exchanged_paths"
 
   : >"$exchanged_paths_file"
+  # Parent/child claim granularity can change between releases. Remove exact
+  # overlapping old symlinks before creating new claims so they cannot block
+  # parent/child directory creation.
   cleanup_overlapping_removed_claims "$docroot" "$deployment_id" "$removed_claims_file" "$new_claims_file"
   reconcile_new_claims "$docroot" "$deployment_id" "$new_claims_file" "$exchange_helper" "$exchanged_paths_file"
   switch_current "$base" "$release_id"
   [[ "$(readlink "$base/current")" == "releases/$release_id" ]] || die "current does not point to releases/$release_id"
   cleanup_exchanged_paths "$exchanged_paths_file"
   rm -f -- "$exchanged_paths_file"
+  # Non-overlapping removed claims are cleaned only after current points at the
+  # new release, so public requests never see old symlinks pointing into a
+  # not-yet-current tree.
   cleanup_removed_claims "$docroot" "$deployment_id" "$removed_claims_file"
 }
 
@@ -683,6 +683,7 @@ rollback_release() {
   [[ -d "$release_dir" ]] || die "rollback release does not exist: $release_dir"
   cleanup_exchanged_paths "$exchanged_paths_file"
   rm -f -- "$exchanged_paths_file"
+  sweep_stale_scratch_dirs "$base"
 
   scratch_dir="$(create_scratch_dir "$base")"
   prepare_claim_transition "$docroot" "$deployment_id" "$base" "$release_dir" "$scratch_dir"
@@ -810,6 +811,7 @@ main() {
   [[ -d "$incoming_release" ]] || die "incoming release does not exist: $incoming_release"
   cleanup_exchanged_paths "$exchanged_paths_file"
   rm -f -- "$exchanged_paths_file"
+  sweep_stale_scratch_dirs "$base"
 
   scratch_dir="$(create_scratch_dir "$base")"
   boundaries_file="$scratch_dir/boundaries"
@@ -826,6 +828,8 @@ main() {
 
   prepare_claim_transition "$docroot" "$deployment_id" "$base" "$incoming_release" "$scratch_dir"
   mv "$incoming_release" "$release_dir"
+  # Uploaded directory mtimes reflect upload time. Refresh the promoted release
+  # mtime so keep-releases pruning keeps the most recently promoted releases.
   touch "$release_dir"
   apply_claim_transition "$docroot" "$deployment_id" "$base" "$release_id" "$exchange_helper" "$scratch_dir"
   run_post_deploy "$docroot" "$post_deploy_file"

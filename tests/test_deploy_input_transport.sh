@@ -45,6 +45,17 @@ fi
 assert_contains "missing required input: password" "$stderr"
 unset INPUT_PASSWORD
 
+if run_deploy "$stdout" "$stderr" --skeleton; then
+  fail "--skeleton should be rejected as an unknown argument"
+fi
+assert_contains "unknown argument: --skeleton" "$stderr"
+
+if INPUT_DOCROOT=$'/tmp/site with spaces' run_deploy "$stdout" "$stderr"; then
+  fail "docroot containing whitespace should fail"
+fi
+assert_contains "docroot must not contain whitespace" "$stderr"
+unset INPUT_DOCROOT
+
 run_deploy "$stdout" "$stderr"
 assert_contains "::add-mask::secret-password" "$stdout"
 assert_contains "port=22" "$stderr"

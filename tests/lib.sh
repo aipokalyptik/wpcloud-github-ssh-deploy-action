@@ -48,6 +48,11 @@ make_exchange_helper() {
   local repo_root="$2"
   local exchange_helper="$tmpdir/exchange-helper"
 
+  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
+    printf '%s\n' "$repo_root/helpers/bin/linux-amd64/exchange-rename"
+    return 0
+  fi
+
   cat >"$exchange_helper" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -59,10 +64,6 @@ mv -T -- "$new" "$old"
 mv -T -- "$tmp" "$new"
 SH
   chmod +x "$exchange_helper"
-
-  if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
-    exchange_helper="$repo_root/helpers/bin/linux-amd64/exchange-rename"
-  fi
 
   printf '%s\n' "$exchange_helper"
 }
