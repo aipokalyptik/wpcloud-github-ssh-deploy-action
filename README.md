@@ -205,6 +205,21 @@ before upload:
 - `.gitmodules` triggers `git submodule update --init --recursive`. If any
   submodule remains uninitialized or at the wrong state, the deploy fails before
   upload. Setting `submodules: recursive` on `actions/checkout` is also fine.
+- Private submodules require Git credentials that can read every private
+  submodule repository. The default `github.token` is scoped to the current
+  repository and was verified to fail for a private submodule repository. Use
+  `actions/checkout` with a read token or SSH key that has access to the parent
+  repo and all private submodules:
+
+```yaml
+- uses: actions/checkout@v5
+  with:
+    token: ${{ secrets.SUBMODULES_PAT }}
+    submodules: recursive
+```
+
+Then run this deploy action normally. `prepare-git: true` remains a safety
+check; it is not a private Git credential manager.
 - Sparse checkout is treated as a deploy misconfiguration and fails early,
   because missing tracked paths can look like intentional removals.
 - `.gitattributes export-ignore` has no effect because this is not a
