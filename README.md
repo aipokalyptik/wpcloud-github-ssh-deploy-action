@@ -134,6 +134,7 @@ with:
   exclude: |
     .git
     .git/
+    .gitignore
     .github/
     secrets/
     local-config.php
@@ -232,8 +233,8 @@ deployment symlink instead of being removed first; the exchanged-away old conten
 is cleaned after `current` points at the new release.
 
 Upload excludes are applied by `rsync` before the release reaches the remote
-host. The built-in list excludes `.git`, `.git/`, `.github/`, `.svn/`, `.hg/`, `.bzr/`,
-`.aws/`, `.ssh/`, `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, and
+host. The built-in list excludes `.git`, `.git/`, `.gitignore`, `.github/`,
+`.svn/`, `.hg/`, `.bzr/`, `.aws/`, `.ssh/`, `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, and
 `.DS_Store`. It intentionally does not exclude all dotfiles, so deployable
 paths such as `.htaccess` and `.well-known/` are not blocked by default.
 

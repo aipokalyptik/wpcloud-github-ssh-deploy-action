@@ -94,6 +94,7 @@ jobs:
           exclude: |
             .git
             .git/
+            .gitignore
             .github/
             .env
             .env.*

@@ -227,6 +227,7 @@ write_excludes() {
     cat >"$output_file" <<'EXCLUDES'
 .git/
 .git
+.gitignore
 .github/
 .svn/
 .hg/
