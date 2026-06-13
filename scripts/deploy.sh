@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly VERSION="0.2.0-transport"
+readonly DEFAULT_POST_DEPLOY=$'wp cache flush\necho "y" | wp edge-cache purge --domain\n'
 
 password=""
 private_key=""
@@ -562,6 +563,7 @@ main() {
   local prepare_git="${INPUT_PREPARE_GIT:-true}"
   local keep_releases="${INPUT_KEEP_RELEASES:-2}"
   local post_deploy="${INPUT_POST_DEPLOY:-}"
+  local post_deploy_mode="default"
   local deployment_id_input="${INPUT_DEPLOYMENT_ID:-}"
   local known_hosts_input="${INPUT_KNOWN_HOSTS:-}"
 
@@ -701,11 +703,27 @@ SH
   info "remote_release=$remote_release"
   info "remote_script=$remote_script"
   info "remote_exchange_helper=$remote_exchange_helper"
+  case "$(trim "$post_deploy")" in
+    "")
+      post_deploy="$DEFAULT_POST_DEPLOY"
+      post_deploy_mode="default"
+      ;;
+    none)
+      post_deploy=""
+      post_deploy_mode="none"
+      ;;
+    *)
+      post_deploy_mode="provided"
+      ;;
+  esac
+
   if [[ -n "$(trim "$post_deploy")" ]]; then
     local_post_deploy="$tmpdir/post-deploy.sh"
     printf '%s' "$post_deploy" >"$local_post_deploy"
-    info "post_deploy=provided"
+    info "post_deploy=$post_deploy_mode"
     info "remote_post_deploy=$remote_post_deploy"
+  else
+    info "post_deploy=$post_deploy_mode"
   fi
 
   local remote_mkdir_command

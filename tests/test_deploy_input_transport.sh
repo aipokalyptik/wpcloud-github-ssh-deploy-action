@@ -409,6 +409,19 @@ run_deploy "$stdout" "$stderr"
 assert_contains "prepare_git=submodules-prepared" "$stderr"
 unset INPUT_SOURCE
 
+run_deploy "$stdout" "$stderr"
+assert_contains "post_deploy=default" "$stderr"
+assert_contains "remote_post_deploy=/srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/post-deploy/release-test.sh" "$stderr"
+assert_contains "post-deploy-upload" "$stderr"
+assert_contains "post-deploy-chmod" "$stderr"
+assert_contains "--post-deploy-file\\ /srv/htdocs/.github-ssh-deploy/deployments/owner-example-repo/post-deploy/release-test.sh" "$stderr"
+
+INPUT_POST_DEPLOY=none run_deploy "$stdout" "$stderr"
+assert_contains "post_deploy=none" "$stderr"
+assert_not_contains "post-deploy-upload" "$stderr"
+assert_not_contains "--post-deploy-file" "$stderr"
+unset INPUT_POST_DEPLOY
+
 INPUT_POST_DEPLOY=$'printf "one|two\\n" > post-marker\nprintf "done\\n" >> post-marker' \
 run_deploy "$stdout" "$stderr"
 assert_contains "post_deploy=provided" "$stderr"

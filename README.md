@@ -58,7 +58,7 @@ Customer workflows should pin the action with Git tags such as `@v1`.
 | `exclude` | No | built-in list | Newline-delimited rsync exclude patterns. Omit for common dotfile defaults, provide a list to replace them, or set `none` to disable excludes. |
 | `prepare-git` | No | `true` | Prepare Git LFS files and submodules before upload. Sparse checkouts fail as a deploy misconfiguration. |
 | `keep-releases` | No | `2` | Number of remote releases to keep for this deployment namespace. Must be positive. |
-| `post-deploy` | No | | Newline-delimited Bash commands to run from the remote docroot after promotion. |
+| `post-deploy` | No | WP cache flush and edge-cache purge | Newline-delimited Bash commands to run from the remote docroot after promotion. Set to `none` to disable. |
 | `deployment-id` | No | normalized repository slug | Stable deployment namespace. Use this when multiple workflows deploy to the same site. |
 | `known-hosts` | No | | Literal `known_hosts` content. If omitted, the action runs `ssh-keyscan`. |
 
@@ -162,8 +162,17 @@ with:
     wp rewrite flush --hard
 ```
 
-`post-deploy` runs with `bash -e` from `docroot`. If a command fails, the action
-fails, but the promoted release is not automatically rolled back.
+If omitted, `post-deploy` runs the WP Cloud cache defaults:
+
+```bash
+wp cache flush
+echo "y" | wp edge-cache purge --domain
+```
+
+Set `post-deploy: none` to run no post-deploy commands. Any other value replaces
+the defaults exactly. `post-deploy` runs with `bash -e` from `docroot`. If a
+command fails, the action fails, but the promoted release is not automatically
+rolled back.
 
 ## Pressable and WP Cloud Notes
 
