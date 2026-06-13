@@ -229,6 +229,8 @@ write_excludes() {
 .git/
 .git
 .gitignore
+.gitattributes
+.gitmodules
 .github/
 .svn/
 .hg/

@@ -257,10 +257,11 @@ deployment symlink instead of being removed first; the exchanged-away old conten
 is cleaned after `current` points at the new release.
 
 Upload excludes are applied by `rsync` before the release reaches the remote
-host. The built-in list excludes `.git`, `.git/`, `.gitignore`, `.github/`,
-`.svn/`, `.hg/`, `.bzr/`, `.aws/`, `.ssh/`, `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, and
-`.DS_Store`. It intentionally does not exclude all dotfiles, so deployable
-paths such as `.htaccess` and `.well-known/` are not blocked by default.
+host. The built-in list excludes `.git`, `.git/`, `.gitignore`,
+`.gitattributes`, `.gitmodules`, `.github/`, `.svn/`, `.hg/`, `.bzr/`, `.aws/`,
+`.ssh/`, `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, and `.DS_Store`. It
+intentionally does not exclude all dotfiles, so deployable paths such as
+`.htaccess` and `.well-known/` are not blocked by default.
 
 The action does not write a manifest. It recomputes claims from the current
 release tree, the previous release tree, and deployment-owned symlinks already
