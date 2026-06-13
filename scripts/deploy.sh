@@ -9,7 +9,6 @@ private_key_passphrase=""
 auth_mode=""
 DEPLOY_TMPDIR=""
 REMOTE_LOGIN=""
-SSH_COMMAND=""
 RSYNC_SSH_COMMAND=""
 PASSWORD_ASKPASS_FILE=""
 SSH_OPTIONS=()
@@ -227,6 +226,7 @@ write_excludes() {
   if [[ -z "$trimmed_input" ]]; then
     cat >"$output_file" <<'EXCLUDES'
 .git/
+.git
 .github/
 .svn/
 .hg/
@@ -250,6 +250,122 @@ EXCLUDES
     printf '%s' "$exclude_input" >"$output_file"
     info "exclude_source=input"
     printf '%s\n' "1"
+  fi
+}
+
+validate_bool_input() {
+  local name="$1"
+  local value="$2"
+
+  case "$value" in
+    true|false)
+      ;;
+    *)
+      die "$name must be true or false"
+      ;;
+  esac
+}
+
+git_lfs_attributes_present() {
+  local work_tree="$1"
+  local attr_file
+  local _path
+  local attr
+  local value
+
+  # The cheap text scan catches the common case; check-attr handles inherited
+  # attributes and keeps the guard aligned with Git's own attribute resolution.
+  while IFS= read -r -d '' attr_file; do
+    if grep -Eq '(^|[[:space:]])filter=lfs([[:space:]]|$)' "$attr_file"; then
+      return 0
+    fi
+  done < <(find "$work_tree" -name .gitattributes -type f -print0 2>/dev/null)
+
+  while IFS= read -r -d '' _path && IFS= read -r -d '' attr && IFS= read -r -d '' value; do
+    if [[ "$attr" == "filter" && "$value" == "lfs" ]]; then
+      return 0
+    fi
+  done < <(git -C "$work_tree" ls-files -z 2>/dev/null | git -C "$work_tree" check-attr -z --stdin filter 2>/dev/null || true)
+
+  return 1
+}
+
+git_lfs_pointer_file_in_source() {
+  local source_dir="$1"
+  local pointer_file
+
+  # After git lfs pull, deployable content should contain real bytes. A pointer
+  # file at this point means checkout/preparation is still incomplete.
+  while IFS= read -r -d '' pointer_file; do
+    if IFS= read -r first_line <"$pointer_file" && [[ "$first_line" == "version https://git-lfs.github.com/spec/v1" ]]; then
+      printf '%s\n' "$pointer_file"
+      return 0
+    fi
+  done < <(find "$source_dir" -path '*/.git' -prune -o -type f -print0 2>/dev/null)
+
+  return 1
+}
+
+prepare_git_source() {
+  local source_dir="$1"
+  local prepare_git="$2"
+
+  if [[ "$prepare_git" == "false" ]]; then
+    info "prepare_git=disabled"
+    return 0
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    info "prepare_git=skipped git-not-found"
+    return 0
+  fi
+
+  local inside_worktree
+  if ! inside_worktree="$(git -C "$source_dir" rev-parse --is-inside-work-tree 2>/dev/null)" || [[ "$(trim "$inside_worktree")" != "true" ]]; then
+    info "prepare_git=skipped non-git-source"
+    return 0
+  fi
+
+  local work_tree
+  work_tree="$(trim "$(git -C "$source_dir" rev-parse --show-toplevel)")"
+  [[ -n "$work_tree" ]] || die "could not determine Git worktree root"
+  info "prepare_git=enabled"
+
+  # Sparse checkouts make absent tracked files indistinguishable from intended
+  # removals, which can clean up public symlinks. Treat that as misconfiguration
+  # unless the caller explicitly opts out of Git preparation.
+  local sparse_checkout
+  sparse_checkout="$(git -C "$work_tree" config --bool core.sparseCheckout 2>/dev/null || true)"
+  if [[ "$(trim "$sparse_checkout")" == "true" ]]; then
+    die "sparse checkout is not supported for deployment; disable sparse checkout or set prepare-git: false intentionally"
+  fi
+
+  if git_lfs_attributes_present "$work_tree"; then
+    if ! git -C "$work_tree" lfs version >/dev/null 2>&1; then
+      die "git-lfs is required to prepare Git LFS files; install git-lfs or set prepare-git: false if the source is already prepared"
+    fi
+
+    run_or_print "git-lfs-install" git -C "$work_tree" lfs install --local
+    run_or_print "git-lfs-pull" git -C "$work_tree" lfs pull
+    info "prepare_git=lfs-prepared"
+
+    local pointer_file
+    if pointer_file="$(git_lfs_pointer_file_in_source "$source_dir")"; then
+      die "Git LFS pointer file remains after preparation: ${pointer_file#"$source_dir"/}"
+    fi
+  fi
+
+  if [[ -f "$work_tree/.gitmodules" ]]; then
+    # Initialize from the worktree root so nested submodules and source subdirs
+    # are prepared consistently before rsync sees the filesystem tree.
+    run_or_print "git-submodule-update" git -C "$work_tree" submodule update --init --recursive
+
+    local submodule_status
+    submodule_status="$(git -C "$work_tree" submodule status --recursive 2>/dev/null || true)"
+    if grep -Eq '^[+-U]' <<<"$submodule_status"; then
+      die "git submodule update --init --recursive did not prepare all submodules"
+    fi
+    info "prepare_git=submodules-prepared"
   fi
 }
 
@@ -442,6 +558,7 @@ main() {
   local docroot="${INPUT_DOCROOT:-/srv/htdocs}"
   local source="${INPUT_SOURCE:-.}"
   local exclude_input="${INPUT_EXCLUDE:-}"
+  local prepare_git="${INPUT_PREPARE_GIT:-true}"
   local keep_releases="${INPUT_KEEP_RELEASES:-2}"
   local post_deploy="${INPUT_POST_DEPLOY:-}"
   local deployment_id_input="${INPUT_DEPLOYMENT_ID:-}"
@@ -456,8 +573,10 @@ main() {
   username="$(trim "$username")"
   docroot="$(trim "$docroot")"
   source="$(trim "$source")"
+  prepare_git="$(trim "$prepare_git")"
   keep_releases="$(trim "$keep_releases")"
 
+  validate_bool_input "prepare-git" "$prepare_git"
   if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
     die "port must be an integer from 1 to 65535"
   fi
@@ -510,6 +629,7 @@ main() {
 
   local known_hosts_file="$tmpdir/known_hosts"
   write_known_hosts "$known_hosts_input" "$host" "$port" "$known_hosts_file"
+  prepare_git_source "$source" "$prepare_git"
   local exclude_file="$tmpdir/rsync-excludes"
   local use_exclude_file
   use_exclude_file="$(write_excludes "$exclude_input" "$exclude_file")"
@@ -566,7 +686,6 @@ SH
     SSH_OPTIONS=(-o "BatchMode=yes" -o "IdentitiesOnly=yes" -i "$private_key_file" "${SSH_OPTIONS[@]}")
   fi
   REMOTE_LOGIN="$username@$host"
-  SSH_COMMAND="$(shell_join ssh "${SSH_OPTIONS[@]}")"
   # rsync launches SSH as a child process, so password-mode uploads use
   # OpenSSH's askpass path. Direct SSH probes still use sshpass above.
   RSYNC_SSH_COMMAND="$(rsync_remote_shell_join ssh "${SSH_OPTIONS[@]}")"

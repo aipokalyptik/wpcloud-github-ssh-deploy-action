@@ -31,7 +31,10 @@ Most remote-helper tests use temporary docroots and internal override files for
 boundary and protected-anchor discovery. They do not require real SSH access.
 The transport test uses `GITHUB_SSH_DEPLOY_DRY_RUN=1` to validate generated
 commands and input handling without connecting to a host, including default,
-replacement, and disabled upload excludes.
+replacement, and disabled upload excludes. It also covers `prepare-git`
+behavior with fake Git commands: sparse checkout refusal, Git LFS preparation
+and unresolved pointer failure, submodule initialization, and the
+`prepare-git: false` escape hatch.
 
 `scripts/check-exchange-helper.sh` rebuilds the Linux amd64 `exchange-rename`
 helper from source, verifies the committed and rebuilt binaries are static ELF
@@ -89,6 +92,7 @@ jobs:
           docroot: /srv/htdocs
           deployment-id: testbed-prod
           exclude: |
+            .git
             .git/
             .github/
             .env

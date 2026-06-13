@@ -33,7 +33,8 @@ jobs:
 
 By default, `source` is the checked-out repository root, common sensitive
 dotfiles and dotdirs are excluded from upload, `docroot` is `/srv/htdocs`,
-`port` is `22`, and `keep-releases` is `2`.
+`port` is `22`, `keep-releases` is `2`, and Git LFS/submodule preparation is
+enabled.
 
 Atomic reclaim of existing public paths currently supports Linux amd64 remote
 hosts with standard tools including `flock` and `mv -T`. Unsupported remote
@@ -55,6 +56,7 @@ Customer workflows should pin the action with Git tags such as `@v1`.
 | `docroot` | No | `/srv/htdocs` | Remote document root. Must not contain whitespace. |
 | `source` | No | `.` | Local path to upload. A trailing slash is applied for rsync directory contents. |
 | `exclude` | No | built-in list | Newline-delimited rsync exclude patterns. Omit for common dotfile defaults, provide a list to replace them, or set `none` to disable excludes. |
+| `prepare-git` | No | `true` | Prepare Git LFS files and submodules before upload. Sparse checkouts fail as a deploy misconfiguration. |
 | `keep-releases` | No | `2` | Number of remote releases to keep for this deployment namespace. Must be positive. |
 | `post-deploy` | No | | Newline-delimited Bash commands to run from the remote docroot after promotion. |
 | `deployment-id` | No | normalized repository slug | Stable deployment namespace. Use this when multiple workflows deploy to the same site. |
@@ -110,6 +112,18 @@ with:
   keep-releases: 5
 ```
 
+Skip Git preparation when deploying build output or a source tree you prepared
+yourself:
+
+```yaml
+with:
+  host: ${{ secrets.WPCLOUD_SSH_HOST }}
+  username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
+  password: ${{ secrets.WPCLOUD_SSH_PASSWORD }}
+  source: dist
+  prepare-git: "false"
+```
+
 Replace the default upload excludes:
 
 ```yaml
@@ -118,6 +132,7 @@ with:
   username: ${{ secrets.WPCLOUD_SSH_USERNAME }}
   password: ${{ secrets.WPCLOUD_SSH_PASSWORD }}
   exclude: |
+    .git
     .git/
     .github/
     secrets/
@@ -175,6 +190,28 @@ anchors at deploy time:
 This is intended to avoid replacing host-owned WordPress anchors while still
 allowing deploys into writable application areas.
 
+## Git Checkout Behavior
+
+The action deploys the final filesystem tree under `source`; it does not deploy
+from `git archive` or a commit object directly. With `prepare-git: true`, if
+`source` is inside a Git worktree, the action prepares common Git features
+before upload:
+
+- Git LFS attributes trigger `git lfs install --local` and `git lfs pull`.
+  If `git-lfs` is unavailable or LFS pointer files remain in `source`, the
+  deploy fails before upload. Setting `lfs: true` on `actions/checkout` is also
+  fine.
+- `.gitmodules` triggers `git submodule update --init --recursive`. If any
+  submodule remains uninitialized or at the wrong state, the deploy fails before
+  upload. Setting `submodules: recursive` on `actions/checkout` is also fine.
+- Sparse checkout is treated as a deploy misconfiguration and fails early,
+  because missing tracked paths can look like intentional removals.
+- `.gitattributes export-ignore` has no effect because this is not a
+  `git archive` deploy. Use the `exclude` input to omit paths from upload.
+
+Set `prepare-git: "false"` only when your workflow intentionally prepares the
+source tree itself, such as deploying a build artifact directory.
+
 ## How Deployments Work
 
 Each deploy uploads the source tree to:
@@ -195,7 +232,7 @@ deployment symlink instead of being removed first; the exchanged-away old conten
 is cleaned after `current` points at the new release.
 
 Upload excludes are applied by `rsync` before the release reaches the remote
-host. The built-in list excludes `.git/`, `.github/`, `.svn/`, `.hg/`, `.bzr/`,
+host. The built-in list excludes `.git`, `.git/`, `.github/`, `.svn/`, `.hg/`, `.bzr/`,
 `.aws/`, `.ssh/`, `.env`, `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, and
 `.DS_Store`. It intentionally does not exclude all dotfiles, so deployable
 paths such as `.htaccess` and `.well-known/` are not blocked by default.

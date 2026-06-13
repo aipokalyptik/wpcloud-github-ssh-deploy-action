@@ -7,6 +7,9 @@ configured upload excludes with `--exclude-from`, uploads
 `scripts/remote-deploy.sh`, uploads the static exchange helper, optionally
 uploads a post-deploy hook, and invokes the remote helper over the selected SSH
 authentication method.
+Before upload, `prepare-git` defaults to true. When `source` is inside a Git
+worktree, the transport prepares Git LFS files and submodules, and refuses
+sparse checkouts because missing tracked paths can be interpreted as removals.
 The transport supports exactly one authentication method per run:
 
 - password auth uses `sshpass` with the `password` input;
@@ -76,6 +79,8 @@ Deploy and rollback are serialized with `flock` on the namespace lock file.
 Claims are computed from files and symlinks in the release tree. Common VCS and
 secret dotfiles are excluded during upload by default; if callers replace or
 disable those excludes, uploaded files are treated like normal release content.
+The transport also excludes both `.git` files and `.git/` directories by
+default so linked-worktree metadata is not uploaded into remote release storage.
 
 By default, the helper discovers sticky boundaries with:
 

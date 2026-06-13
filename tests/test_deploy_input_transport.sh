@@ -23,6 +23,78 @@ run_deploy() {
   ) >"$stdout_file" 2>"$stderr_file"
 }
 
+make_fake_git() {
+  local bin_dir="$1"
+  mkdir -p "$bin_dir"
+  cat >"$bin_dir/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_call() {
+  if [[ -n "${FAKE_GIT_LOG:-}" ]]; then
+    printf '%s\n' "git $*" >>"$FAKE_GIT_LOG"
+  fi
+}
+
+if [[ "${1:-}" == "-C" ]]; then
+  shift 2
+fi
+
+log_call "$@"
+
+case "${1:-}" in
+  rev-parse)
+    case "${2:-}" in
+      --is-inside-work-tree)
+        [[ "${FAKE_GIT_INSIDE_WORKTREE:-1}" == "1" ]] && { printf 'true\n'; exit 0; }
+        printf 'false\n'
+        exit 1
+        ;;
+      --show-toplevel)
+        printf '%s\n' "${FAKE_GIT_WORKTREE:?}"
+        exit 0
+        ;;
+    esac
+    ;;
+  config)
+    if [[ "${2:-}" == "--bool" && "${3:-}" == "core.sparseCheckout" ]]; then
+      if [[ "${FAKE_GIT_SPARSE:-0}" == "1" ]]; then
+        printf 'true\n'
+      else
+        printf 'false\n'
+      fi
+      exit 0
+    fi
+    ;;
+  lfs)
+    case "${2:-}" in
+      version)
+        [[ "${FAKE_GIT_LFS_AVAILABLE:-1}" == "1" ]] && { printf 'git-lfs/3.0.0\n'; exit 0; }
+        exit 1
+        ;;
+      install|pull)
+        exit 0
+        ;;
+    esac
+    ;;
+  submodule)
+    case "${2:-}" in
+      update)
+        exit 0
+        ;;
+      status)
+        printf '%s\n' "${FAKE_GIT_SUBMODULE_STATUS:-}"
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+
+exit 0
+SH
+  chmod +x "$bin_dir/git"
+}
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
@@ -181,6 +253,7 @@ default_exclude_tmp="$tmpdir/default-excludes"
 GITHUB_SSH_DEPLOY_TMPDIR="$default_exclude_tmp" \
 GITHUB_SSH_DEPLOY_KEEP_TEMP=1 \
 run_deploy "$stdout" "$stderr"
+assert_contains ".git" "$default_exclude_tmp/rsync-excludes"
 assert_contains ".git/" "$default_exclude_tmp/rsync-excludes"
 assert_contains ".github/" "$default_exclude_tmp/rsync-excludes"
 assert_contains ".env.*" "$default_exclude_tmp/rsync-excludes"
@@ -205,8 +278,8 @@ unset INPUT_EXCLUDE
 if command -v rsync >/dev/null 2>&1; then
   rsync_source="$tmpdir/rsync-source"
   rsync_dest="$tmpdir/rsync-dest"
-  mkdir -p "$rsync_source/.git" "$rsync_source/.github" "$rsync_source/.well-known" "$rsync_dest"
-  printf 'git\n' >"$rsync_source/.git/config"
+  mkdir -p "$rsync_source/.github" "$rsync_source/.well-known" "$rsync_dest"
+  printf 'gitdir: /tmp/local-worktree\n' >"$rsync_source/.git"
   printf 'workflow\n' >"$rsync_source/.github/deploy.yml"
   printf 'env\n' >"$rsync_source/.env"
   printf 'apache\n' >"$rsync_source/.htaccess"
@@ -214,13 +287,124 @@ if command -v rsync >/dev/null 2>&1; then
   printf 'public\n' >"$rsync_source/index.php"
 
   rsync -a --delete --exclude-from="$default_exclude_tmp/rsync-excludes" "$rsync_source/" "$rsync_dest/"
-  [[ ! -e "$rsync_dest/.git/config" ]] || fail "default excludes should omit .git/"
+  [[ ! -e "$rsync_dest/.git" ]] || fail "default excludes should omit .git files and directories"
   [[ ! -e "$rsync_dest/.github/deploy.yml" ]] || fail "default excludes should omit .github/"
   [[ ! -e "$rsync_dest/.env" ]] || fail "default excludes should omit .env"
   [[ -f "$rsync_dest/.htaccess" ]] || fail "default excludes should allow .htaccess"
   [[ -f "$rsync_dest/.well-known/acme-challenge" ]] || fail "default excludes should allow .well-known/"
   [[ -f "$rsync_dest/index.php" ]] || fail "default excludes should allow normal files"
 fi
+
+git_prep_tmp="$tmpdir/git-prep"
+mkdir -p "$git_prep_tmp/source"
+fake_git_bin="$git_prep_tmp/bin"
+fake_git_log="$git_prep_tmp/git.log"
+make_fake_git "$fake_git_bin"
+
+FAKE_GIT_INSIDE_WORKTREE=0 \
+FAKE_GIT_WORKTREE="$git_prep_tmp/source" \
+FAKE_GIT_LOG="$fake_git_log" \
+PATH="$fake_git_bin:$PATH" \
+INPUT_SOURCE="$git_prep_tmp/source" \
+run_deploy "$stdout" "$stderr"
+assert_contains "prepare_git=skipped non-git-source" "$stderr"
+
+: >"$fake_git_log"
+FAKE_GIT_INSIDE_WORKTREE=1 \
+FAKE_GIT_WORKTREE="$git_prep_tmp/source" \
+FAKE_GIT_LOG="$fake_git_log" \
+PATH="$fake_git_bin:$PATH" \
+INPUT_PREPARE_GIT=false \
+INPUT_SOURCE="$git_prep_tmp/source" \
+run_deploy "$stdout" "$stderr"
+assert_contains "prepare_git=disabled" "$stderr"
+assert_not_contains "rev-parse" "$fake_git_log"
+unset INPUT_PREPARE_GIT INPUT_SOURCE
+
+if INPUT_PREPARE_GIT=maybe run_deploy "$stdout" "$stderr"; then
+  fail "invalid prepare-git should fail"
+fi
+assert_contains "prepare-git must be true or false" "$stderr"
+unset INPUT_PREPARE_GIT
+
+if FAKE_GIT_INSIDE_WORKTREE=1 \
+  FAKE_GIT_WORKTREE="$git_prep_tmp/source" \
+  FAKE_GIT_SPARSE=1 \
+  FAKE_GIT_LOG="$fake_git_log" \
+  PATH="$fake_git_bin:$PATH" \
+  INPUT_SOURCE="$git_prep_tmp/source" \
+  run_deploy "$stdout" "$stderr"; then
+  fail "sparse checkout should fail"
+fi
+assert_contains "sparse checkout is not supported for deployment; disable sparse checkout or set prepare-git: false intentionally" "$stderr"
+unset INPUT_SOURCE
+
+lfs_source="$git_prep_tmp/lfs-source"
+mkdir -p "$lfs_source/assets"
+printf '*.png filter=lfs diff=lfs merge=lfs -text\n' >"$lfs_source/.gitattributes"
+cat >"$lfs_source/assets/logo.png" <<'LFS'
+version https://git-lfs.github.com/spec/v1
+oid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+size 123
+LFS
+
+if FAKE_GIT_INSIDE_WORKTREE=1 \
+  FAKE_GIT_WORKTREE="$lfs_source" \
+  FAKE_GIT_LFS_AVAILABLE=0 \
+  FAKE_GIT_LOG="$fake_git_log" \
+  PATH="$fake_git_bin:$PATH" \
+  INPUT_SOURCE="$lfs_source" \
+  run_deploy "$stdout" "$stderr"; then
+  fail "missing git-lfs should fail when LFS attributes are present"
+fi
+assert_contains "git-lfs is required to prepare Git LFS files" "$stderr"
+
+: >"$fake_git_log"
+if FAKE_GIT_INSIDE_WORKTREE=1 \
+  FAKE_GIT_WORKTREE="$lfs_source" \
+  FAKE_GIT_LFS_AVAILABLE=1 \
+  FAKE_GIT_LOG="$fake_git_log" \
+  PATH="$fake_git_bin:$PATH" \
+  INPUT_SOURCE="$lfs_source" \
+  run_deploy "$stdout" "$stderr"; then
+  fail "unresolved LFS pointer should fail"
+fi
+assert_contains "dry-run: git-lfs-pull: git -C $lfs_source lfs pull" "$stderr"
+assert_contains "Git LFS pointer file remains after preparation" "$stderr"
+rm -f "$lfs_source/assets/logo.png"
+printf 'real image bytes\n' >"$lfs_source/assets/logo.png"
+unset INPUT_SOURCE
+
+submodule_source="$git_prep_tmp/submodule-source"
+mkdir -p "$submodule_source/vendor"
+cat >"$submodule_source/.gitmodules" <<'MODULES'
+[submodule "vendor/plugin"]
+	path = vendor/plugin
+	url = https://example.com/plugin.git
+MODULES
+
+: >"$fake_git_log"
+if FAKE_GIT_INSIDE_WORKTREE=1 \
+  FAKE_GIT_WORKTREE="$submodule_source" \
+  FAKE_GIT_SUBMODULE_STATUS="-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa vendor/plugin" \
+  FAKE_GIT_LOG="$fake_git_log" \
+  PATH="$fake_git_bin:$PATH" \
+  INPUT_SOURCE="$submodule_source" \
+  run_deploy "$stdout" "$stderr"; then
+  fail "unprepared submodule should fail"
+fi
+assert_contains "dry-run: git-submodule-update: git -C $submodule_source submodule update --init --recursive" "$stderr"
+assert_contains "git submodule update --init --recursive did not prepare all submodules" "$stderr"
+
+FAKE_GIT_INSIDE_WORKTREE=1 \
+FAKE_GIT_WORKTREE="$submodule_source" \
+FAKE_GIT_SUBMODULE_STATUS=" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa vendor/plugin" \
+FAKE_GIT_LOG="$fake_git_log" \
+PATH="$fake_git_bin:$PATH" \
+INPUT_SOURCE="$submodule_source" \
+run_deploy "$stdout" "$stderr"
+assert_contains "prepare_git=submodules-prepared" "$stderr"
+unset INPUT_SOURCE
 
 INPUT_POST_DEPLOY=$'printf "one|two\\n" > post-marker\nprintf "done\\n" >> post-marker' \
 run_deploy "$stdout" "$stderr"
